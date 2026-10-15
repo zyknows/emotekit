@@ -140,7 +140,8 @@ function loadInternals() {
     ...k.parseBttvChannel(MOCK['https://api.betterttv.net/3/cached/users/twitch/123']),
     ...k.parse7tvUser(MOCK['https://7tv.io/v3/users/twitch/123']),
   ];
-  k.state.map = k.buildMap([globals, channel]);
+  k.state.lists = [globals, channel];
+  k.applyEmoteLists();
 
   const msg = (text) => {
     const line = doc.createElement('div');
@@ -366,7 +367,16 @@ function loadInternals() {
     ed.remove();
   });
 
-  await test('emote picker: button, grouped list, search, insert, close', async () => {
+  const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
+  const inputEvent = (el, value) => { el.value = value; el.dispatchEvent(new dom.window.Event('input')); };
+  const headings = (panel) => [...panel.querySelectorAll('h3')].map((h) => h.textContent);
+  const itemCodes = (root) => [...root.querySelectorAll('.emotekit-picker-item')].map((i) => i.dataset.code);
+  const sectionCodes = (panel, title) => {
+    const s = [...panel.querySelectorAll('.emotekit-picker-section')].find((x) => x.querySelector('h3').textContent.startsWith(title));
+    return s ? itemCodes(s) : null;
+  };
+
+  await test('emote picker: button, sections, search, insert, close', async () => {
     const ed = fakeChatInput();
     k.installPicker();
     const button = doc.querySelector('.emotekit-picker-button');
@@ -383,25 +393,22 @@ function loadInternals() {
     const panel = doc.querySelector('.emotekit-picker');
     assert.strictEqual(panel.style.display, 'flex');
     assert.strictEqual(button.getAttribute('aria-expanded'), 'true');
-    const headings = [...panel.querySelectorAll('h3')].map((h) => h.textContent);
-    assert.deepStrictEqual(headings, ['Channel · 7TV (2)', 'Channel · BTTV (1)', 'Channel · FFZ (1)', 'Global · 7TV (1)', 'Global · BTTV (2)', 'Global · FFZ (2)']);
-    const codes = () => [...panel.querySelectorAll('.emotekit-picker-item')].filter((i) => !i.hidden).map((i) => i.dataset.code);
+    assert.deepStrictEqual(headings(panel), ['Channel · 7TV (2)', 'Channel · BTTV (1)', 'Channel · FFZ (1)', 'Global · 7TV (1)', 'Global · BTTV (2)', 'Global · FFZ (2)']);
+    assert.ok(panel.querySelector('.emotekit-picker-hint'), 'hints shown while there are no favourites or stats');
+    assert.strictEqual(itemCodes(panel).filter((c) => c === 'pepeD').length, 1, 'shadowed duplicates appear once');
     const clapItem = panel.querySelector('[data-code="Clap"]');
     assert.ok(clapItem.querySelector('img').getAttribute('src'), 'visible images start loading when the picker opens');
     assert.ok(clapItem.classList.contains('emotekit-loading'), 'placeholder while loading');
     clapItem.querySelector('img').dispatchEvent(new dom.window.Event('load'));
     assert.ok(!clapItem.classList.contains('emotekit-loading'), 'placeholder removed once loaded');
-    assert.ok(codes().includes('pepeD') && codes().filter((c) => c === 'pepeD').length === 1, 'shadowed duplicates appear once');
 
     const search = panel.querySelector('.emotekit-picker-search');
-    search.value = 'cl';
-    search.dispatchEvent(new dom.window.Event('input'));
-    assert.deepStrictEqual(codes(), ['Clap']);
-    assert.strictEqual([...panel.querySelectorAll('.emotekit-picker-section:not([hidden]) h3')].map((h) => h.textContent).join(), 'Channel · 7TV (1)', 'heading shows the match count');
-    assert.strictEqual([...panel.querySelectorAll('.emotekit-picker-section')].filter((x) => !x.hidden).length, 1, 'empty sections hidden');
-    search.value = 'nothing-like-this';
-    search.dispatchEvent(new dom.window.Event('input'));
-    assert.strictEqual(panel.querySelector('.emotekit-picker-empty').hidden, false, 'empty message');
+    inputEvent(search, 'cl');
+    assert.deepStrictEqual(headings(panel), ['Results (1)']);
+    assert.deepStrictEqual(itemCodes(panel), ['Clap']);
+    inputEvent(search, 'nothing-like-this');
+    assert.strictEqual(panel.querySelector('.emotekit-picker-empty').textContent, 'No emotes match.');
+    inputEvent(search, '');
 
     // An emote whose image fails shows its name instead, and still works.
     const kekwImg = panel.querySelector('[data-code="KEKW"] img');
@@ -412,29 +419,29 @@ function loadInternals() {
     // Click inserts at the caret, with spaces as needed.
     ed.type('nice');
     panel.querySelector('[data-code="KEKW"]').click();
-    await new Promise((r) => setTimeout(r, 0));
+    await tick();
     assert.strictEqual(ed.value, 'nice KEKW ');
     panel.querySelector('[data-code="Clap"]').click();
-    await new Promise((r) => setTimeout(r, 0));
+    await tick();
     assert.strictEqual(ed.value, 'nice KEKW Clap ');
 
-    // Enter in the search box inserts the first match, after moving the caret into the chat box.
+    // Enter in the search box inserts the top result, after moving the caret into the chat box.
     search.focus();
-    search.value = 'lilz';
-    search.dispatchEvent(new dom.window.Event('input'));
+    inputEvent(search, 'lilz');
     const enterDown = new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
     search.dispatchEvent(enterDown);
     assert.ok(enterDown.defaultPrevented);
     assert.strictEqual(doc.activeElement, search, 'focus stays in search until Enter is released, so the keypress cannot send the message');
     assert.strictEqual(ed.value, 'nice KEKW Clap ');
     search.dispatchEvent(new dom.window.KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
-    await new Promise((r) => setTimeout(r, 200));
+    await tick(200);
     assert.strictEqual(ed.value, 'nice KEKW Clap LilZ ');
 
     doc.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     assert.strictEqual(panel.style.display, 'none', 'Escape closes');
     button.click();
     assert.strictEqual(panel.style.display, 'flex');
+    assert.strictEqual(search.value, '', 'reopens with an empty search');
     doc.body.dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
     assert.strictEqual(panel.style.display, 'none', 'click outside closes');
     assert.strictEqual(button.getAttribute('aria-expanded'), 'false');
@@ -445,6 +452,219 @@ function loadInternals() {
     k.ensurePickerButton();
     assert.ok(ed2.box.querySelector('.emotekit-picker-button'), 're-added after re-render');
     ed2.remove();
+  });
+
+  await test('popular here: counts chat usage per channel, saves it, and decays it', async () => {
+    dom.window.localStorage.clear();
+    k.loadUsage('chan-a');
+    for (const text of ['KEKW KEKW KEKW Clap', 'KEKW', 'catJAM KEKW', 'Clap']) k.processFragment(msg(text));
+    assert.strictEqual(k.usage.scores.get('FFZ:2'), 3, 'counted once per message, not per repeat');
+    assert.strictEqual(k.usage.scores.get('7TV:s2'), 2);
+    assert.strictEqual(k.usage.scores.get('BTTV:b3'), 1);
+
+    const ed = fakeChatInput();
+    k.ensurePickerButton();
+    k.openPicker();
+    const panel = doc.querySelector('.emotekit-picker');
+    assert.deepStrictEqual(sectionCodes(panel, 'Popular here'), ['KEKW', 'Clap', 'catJAM'], 'most used first');
+    // Search ranks prefix matches first, then popularity.
+    inputEvent(panel.querySelector('.emotekit-picker-search'), 'c');
+    assert.deepStrictEqual(itemCodes(panel).slice(0, 2), ['Clap', 'catJAM']);
+    k.closePicker();
+    assert.deepStrictEqual(A(k.findCompletions('c')), ['Clap', 'catJAM'], 'Tab completion ranks by popularity too');
+
+    // New chat lines arriving through the page observer are counted too.
+    const obs = new dom.window.MutationObserver(k.onMutations);
+    obs.observe(doc.body, { childList: true, subtree: true });
+    const line = doc.createElement('div');
+    line.innerHTML = '<span class="chat-author__display-name">x</span>: <span class="text-fragment">catJAM</span>';
+    doc.body.appendChild(line);
+    await tick();
+    obs.disconnect();
+    assert.strictEqual(k.usage.scores.get('BTTV:b3'), 2, 'counted via the observer path');
+
+    // A message split around a mention counts each emote once.
+    const split = doc.createElement('div');
+    split.className = 'chat-line__message';
+    split.innerHTML = '<span class="text-fragment">Clap </span><span class="mention-fragment">@x</span><span class="text-fragment"> Clap</span>';
+    doc.body.appendChild(split);
+    split.querySelectorAll('.text-fragment').forEach((f) => k.processFragment(f));
+    assert.strictEqual(split.querySelectorAll('.emotekit-emote').length, 2, 'both rendered');
+    assert.strictEqual(k.usage.scores.get('7TV:s2'), 3, 'counted once for the message');
+
+    // Saved per channel and restored.
+    k.saveUsage();
+    const saved = JSON.parse(dom.window.localStorage.getItem('emotekit:usage:chan-a'));
+    assert.strictEqual(saved.s['FFZ:2'], 3);
+    k.loadUsage('chan-b');
+    assert.strictEqual(k.usage.scores.size, 0, 'other channels start empty');
+    // A week-old save counts half.
+    saved.t -= 7 * 24 * 3600 * 1000;
+    dom.window.localStorage.setItem('emotekit:usage:chan-a', JSON.stringify(saved));
+    k.loadUsage('chan-a');
+    assert.ok(Math.abs(k.usage.scores.get('FFZ:2') - 1.5) < 0.01, 'halves every week');
+
+    // Only the 40 most recently watched channels keep stats.
+    const index = {};
+    for (let i = 0; i < 45; i++) {
+      index[`old-${i}`] = 1000 + i;
+      dom.window.localStorage.setItem(`emotekit:usage:old-${i}`, '{"t":1,"s":{}}');
+    }
+    dom.window.localStorage.setItem('emotekit:usage-index', JSON.stringify(index));
+    k.countUsage('FFZ:2');
+    k.saveUsage();
+    const kept = Object.keys(JSON.parse(dom.window.localStorage.getItem('emotekit:usage-index')));
+    assert.strictEqual(kept.length, 40);
+    assert.ok(kept.includes('chan-a'), 'current channel kept');
+    assert.strictEqual(dom.window.localStorage.getItem('emotekit:usage:old-0'), null, 'oldest dropped from storage');
+    assert.ok(dom.window.localStorage.getItem('emotekit:usage:old-44'), 'recent ones kept');
+
+    // Re-rendering after a hide/show doesn't count again.
+    const before = k.usage.scores.get('FFZ:2');
+    k.refreshChat();
+    assert.strictEqual(k.usage.scores.get('FFZ:2'), before);
+    k.loadUsage(null);
+    ed.remove();
+  });
+
+  await test('favourites: first in the picker, in search and in Tab completion', async () => {
+    k.loadUsage(null);
+    k.setFavourite('BTTV:b2', true); // SantaHat
+    k.setFavourite('FFZ:1', true); // LilZ
+    assert.deepStrictEqual(A(JSON.parse(dom.window.localStorage.getItem('emotekit:favourites'))), ['BTTV:b2', 'FFZ:1'], 'saved');
+    const ed = fakeChatInput();
+    k.ensurePickerButton();
+    k.openPicker();
+    const panel = doc.querySelector('.emotekit-picker');
+    assert.ok(headings(panel)[0].startsWith('Favourites'), 'favourites come first');
+    assert.deepStrictEqual(sectionCodes(panel, 'Favourites'), ['SantaHat', 'LilZ'], 'in the order they were added');
+    inputEvent(panel.querySelector('.emotekit-picker-search'), 'l');
+    assert.strictEqual(itemCodes(panel)[0], 'LilZ', 'a favourite that starts with the search leads');
+    assert.ok(itemCodes(panel).indexOf('SantaHat') === -1, 'non-matches are left out');
+    inputEvent(panel.querySelector('.emotekit-picker-search'), 'z');
+    assert.strictEqual(itemCodes(panel)[0], 'LilZ', 'among contains-matches, the favourite leads');
+    k.closePicker();
+    k.setFavourite('7TV:s1', true); // RainTime
+    assert.strictEqual(k.findCompletions('R')[0], 'RainTime');
+    k.setFavourite('BTTV:b2', false);
+    k.setFavourite('FFZ:1', false);
+    k.setFavourite('7TV:s1', false);
+    assert.deepStrictEqual(A(k.getFavourites()), []);
+    ed.remove();
+  });
+
+  await test('clicking an emote in chat: favourite and hide; clicking a hidden name shows it again', async () => {
+    k.installEmoteMenu();
+    k.installTooltip();
+    const el = msg('pepeD and KEKW RainTime');
+    k.processFragment(el);
+    const click = (node) => node.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+    const kekw = () => el.querySelector('[data-emotekit="KEKW"]');
+
+    // Menu lists the emote and the one stacked on it.
+    click(kekw().querySelector('img'));
+    let menu = doc.querySelector('.emotekit-menu');
+    assert.ok(menu, 'menu opens');
+    assert.deepStrictEqual([...menu.querySelectorAll('.emotekit-menu-name')].map((n) => n.firstChild.textContent), ['KEKW', 'RainTime']);
+
+    // Favourite stays open and updates.
+    const star = menu.querySelector('.emotekit-menu-button');
+    star.click();
+    assert.strictEqual(star.getAttribute('aria-pressed'), 'true');
+    assert.ok(k.isFavourite('FFZ:2'));
+    assert.ok(doc.querySelector('.emotekit-menu'), 'still open after favouriting');
+    star.click();
+    assert.ok(!k.isFavourite('FFZ:2'), 'toggles back');
+
+    // Clicking the same emote again closes; Escape closes too.
+    click(kekw());
+    assert.ok(!doc.querySelector('.emotekit-menu'), 'second click closes');
+    click(kekw());
+    doc.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    assert.ok(!doc.querySelector('.emotekit-menu'), 'Escape closes');
+
+    // Hide: the menu closes, and every KEKW in chat becomes its name as text.
+    const other = msg('KEKW too');
+    k.processFragment(other);
+    click(kekw());
+    menu = doc.querySelector('.emotekit-menu');
+    [...menu.querySelectorAll('.emotekit-menu-button')].find((b) => b.textContent === 'Hide').click();
+    assert.ok(!doc.querySelector('.emotekit-menu'), 'menu closes after hiding');
+    assert.ok(k.hidden.has('FFZ:2'));
+    assert.deepStrictEqual(A(JSON.parse(dom.window.localStorage.getItem('emotekit:hidden'))), ['FFZ:2'], 'saved');
+    for (const m of [el, other]) {
+      const word = m.querySelector('.emotekit-hidden-word');
+      assert.ok(word && word.textContent === 'KEKW', 'shown as its name');
+      assert.ok(!m.querySelector('[data-emotekit="KEKW"]'), 'no image');
+    }
+    assert.strictEqual(el.textContent, 'pepeD and KEKW RainTime'.replace('pepeD', '').replace('RainTime', ''), 'text kept, word order intact');
+    assert.ok(el.querySelector('[data-emotekit="RainTime"]'), 'the overlay that sat on it stays, now on its own');
+    assert.ok(!k.findCompletions('KEK').includes('KEKW'), 'left out of Tab completion');
+
+    // New messages show it as text too, and hovering explains how to bring it back.
+    const later = msg('KEKW later');
+    k.processFragment(later);
+    const word = later.querySelector('.emotekit-hidden-word');
+    assert.ok(word);
+    word.dispatchEvent(new dom.window.MouseEvent('mouseover', { bubbles: true }));
+    assert.match(doc.querySelector('.emotekit-tooltip').textContent, /Hidden\. Click to show it again\./);
+
+    // Click the name: it comes back everywhere.
+    click(word);
+    assert.ok(!k.hidden.has('FFZ:2'));
+    for (const m of [el, other, later]) {
+      assert.ok(m.querySelector('[data-emotekit="KEKW"]'), 'image back');
+      assert.ok(!m.querySelector('.emotekit-hidden-word'));
+    }
+  });
+
+  await test('hide mode in the picker; other tabs stay in sync', async () => {
+    const ed = fakeChatInput();
+    k.ensurePickerButton();
+    k.setHidden('7TV:s3', true); // pepeD (7TV channel)
+    k.openPicker();
+    const panel = doc.querySelector('.emotekit-picker');
+    assert.ok(!itemCodes(panel).includes('pepeD'), 'hidden emotes are not offered');
+    const manage = panel.querySelector('.emotekit-picker-manage');
+    assert.strictEqual(manage.textContent, '1 hidden emote · Manage');
+    manage.click();
+    assert.ok(panel.classList.contains('emotekit-hide-mode'));
+    const toggle = panel.querySelector('.emotekit-picker-hide-toggle');
+    assert.strictEqual(toggle.getAttribute('aria-pressed'), 'true');
+    assert.strictEqual(toggle.textContent, 'Done');
+    assert.strictEqual(panel.querySelector('.emotekit-picker-notice').hidden, false);
+    assert.deepStrictEqual(sectionCodes(panel, 'Hidden'), ['pepeD']);
+    assert.ok(panel.querySelector('.emotekit-picker-item[data-code="pepeD"]').classList.contains('emotekit-is-hidden'));
+
+    // Clicking toggles in place; nothing is inserted.
+    const chatMsg = msg('Clap');
+    k.processFragment(chatMsg);
+    const clap = panel.querySelector('[data-code="Clap"]');
+    clap.click();
+    await tick();
+    assert.ok(clap.classList.contains('emotekit-is-hidden') && clap.isConnected, 'dimmed in place');
+    assert.ok(chatMsg.querySelector('.emotekit-hidden-word'), 'chat updates right away');
+    assert.strictEqual(ed.value, '', 'nothing inserted in hide mode');
+    clap.click();
+    assert.ok(!clap.classList.contains('emotekit-is-hidden'));
+    assert.ok(chatMsg.querySelector('[data-emotekit="Clap"]'));
+
+    toggle.click();
+    assert.ok(!panel.classList.contains('emotekit-hide-mode'), 'Done leaves hide mode');
+    k.closePicker();
+
+    // Another tab hides KEKW: this tab follows.
+    k.installStorageSync();
+    dom.window.localStorage.setItem('emotekit:hidden', JSON.stringify(['7TV:s3', 'FFZ:2']));
+    dom.window.dispatchEvent(new dom.window.StorageEvent('storage', { key: 'emotekit:hidden' }));
+    const m = msg('KEKW');
+    k.processFragment(m);
+    assert.ok(m.querySelector('.emotekit-hidden-word'), 'synced from the other tab');
+
+    k.setHidden('7TV:s3', false);
+    k.setHidden('FFZ:2', false);
+    assert.strictEqual(k.hidden.size, 0);
+    ed.remove();
   });
 
   await test('perf: 500 messages x 20 words', () => {
@@ -542,6 +762,24 @@ function loadInternals() {
     await new Promise((r) => setTimeout(r, 10));
     assert.strictEqual(s.querySelectorAll('.emotekit-emote').length, 3);
     assert.ok(fetched.includes('https://gql.twitch.tv/gql'));
+    d.window.close();
+  });
+
+  await test('damaged saved settings do not stop the script', async () => {
+    const d = new JSDOM('<!doctype html><body></body>', { url: 'https://www.twitch.tv/somechannel', runScripts: 'outside-only' });
+    d.window.localStorage.setItem('emotekit:hidden', '5');
+    d.window.localStorage.setItem('emotekit:favourites', '{"oops":true}');
+    d.window.localStorage.setItem('emotekit:usage-index', 'not json');
+    d.window.localStorage.setItem('emotekit:usage:123', '{"t":"x","s":null}');
+    d.window.fetch = mockFetch([]);
+    const infos = [];
+    d.window.console.info = (...a) => infos.push(a.join(' '));
+    const errors = [];
+    d.window.addEventListener('error', (e) => errors.push(e.message));
+    d.window.eval(SRC);
+    await tick(50);
+    assert.deepStrictEqual(errors, []);
+    assert.ok(infos.some((x) => x.includes('emotes ready')), 'started normally');
     d.window.close();
   });
 

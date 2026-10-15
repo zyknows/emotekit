@@ -23,8 +23,9 @@ It is a single file with no dependencies. It also works in Chrome and Firefox wi
 - Uses 2x images on high-DPI screens.
 - Hovering an emote immediately shows a larger preview, its name and service, and any zero-width emotes on it.
 - Copied chat text keeps the emote names.
-- **Tab completion:** type the start of an emote name in the chat box and press Tab. Press Tab again for the next match, Shift+Tab for the previous one. Matching ignores case.
-- **Emote picker:** the grid button next to Twitch's emote button lists the channel's and global emotes by service, with a search box. Click an emote, or press Enter in the search box, to add it to your message.
+- **Tab completion:** type the start of an emote name in the chat box and press Tab. Press Tab again for the next match, Shift+Tab for the previous one. Matching ignores case; favourites and the channel's most used emotes come first.
+- **Emote picker:** the grid button next to Twitch's emote button opens your favourites, then the emotes this channel's chat uses most ("Popular here"), then every channel and global emote by service. Search ranks names that start with what you type first, then favourites and popular ones. Click an emote, or press Enter in the search box, to add it to your message.
+- **Favourite or hide an emote:** click it in chat. Favourites appear first in the picker and in Tab completion. A hidden emote shows as its name in chat; hover it to see it highlighted, and click it to bring the emote back. The picker's **Hide emotes** button lists your hidden emotes and lets you hide or show any emote by clicking it.
 - Reloads emotes when you switch channels.
 
 If two emotes share a name, a channel emote is used over a global one, and 7TV is used over BTTV, which is used over FFZ.
@@ -39,7 +40,11 @@ Anyone with EmoteKit, BTTV, FFZ or 7TV sees the emotes you send.
 | `api.ivr.fi` | Fallback for the lookup above |
 | `api.betterttv.net`, `api.frankerfacez.com`, `7tv.io` | Emote lists |
 
-Emote images load from each service's CDN. The script does not read messages or account data.
+Emote images load from each service's CDN. The script does not read your account and sends nothing about chat anywhere.
+
+### Stored in your browser
+
+To rank the picker, EmoteKit counts how often each emote appears in the chats you watch. The counts (for your 40 most recent channels), your favourites and your hidden emotes are saved in your browser's storage for twitch.tv and never leave it.
 
 ## Troubleshooting
 

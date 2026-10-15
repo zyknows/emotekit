@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EmoteKit for Twitch
 // @namespace    https://github.com/zyknows/emotekit
-// @version      0.2.1
+// @version      0.3.0
 // @description  Shows BetterTTV, FrankerFaceZ and 7TV emotes in Twitch chat.
 // @author       Volkan
 // @license      MIT
@@ -107,7 +107,8 @@
 
   // ---------------------------------------------------------------------------
   // Provider parsers (pure: API JSON in, emote list out)
-  // Emote shape: { code, provider, source, url1x, url2x, zeroWidth }
+  // Emote shape: { key, code, provider, source, url1x, url2x, zeroWidth }
+  // `key` (provider + the service's emote ID) identifies one image across channels.
   // ---------------------------------------------------------------------------
 
   function parseBttv(list, source) {
@@ -116,6 +117,7 @@
       // modifier: true marks BTTV text modifiers (w!, h!, z!...), which change the next emote rather than render.
       .filter((e) => e && e.id && e.code && e.modifier !== true)
       .map((e) => ({
+        key: `BTTV:${e.id}`,
         code: e.code,
         provider: 'BTTV',
         source,
@@ -148,6 +150,7 @@
         const url1x = absUrl(urls['1']);
         if (!url1x) continue;
         out.push({
+          key: `FFZ:${e.id != null ? e.id : e.name}`,
           code: e.name,
           provider: 'FFZ',
           source,
@@ -186,7 +189,7 @@
       const url1x = pick('1x');
       if (!url1x) continue;
       const zeroWidth = ((e.flags || 0) & 1) === 1 || ((e.data.flags || 0) & 256) === 256;
-      out.push({ code: e.name, provider: '7TV', source, url1x, url2x: pick('2x'), zeroWidth });
+      out.push({ key: `7TV:${e.id || e.data.id || e.name}`, code: e.name, provider: '7TV', source, url1x, url2x: pick('2x'), zeroWidth });
     }
     return out;
   }
@@ -281,7 +284,11 @@
   // ---------------------------------------------------------------------------
 
   const state = {
-    map: new Map(),
+    map: new Map(), // code -> emote shown in chat (hidden emotes left out)
+    hiddenWords: new Map(), // code -> emote the user hid; the word shows as clickable text
+    full: new Map(), // code -> emote by precedence, hidden or not (for the picker's hide mode)
+    all: new Map(), // key -> every emote available here, including shadowed ones
+    lists: [], // [globals, channel] as loaded, so the map can be rebuilt
     globals: null,
     globalsPromise: null,
     channelCache: new Map(), // twitch user id -> emote list
@@ -344,11 +351,13 @@
     const globals = await ensureGlobals();
     let channel = [];
     let label = 'no channel';
+    let channelId = null;
     if (target) {
       try {
         const ch = await resolveChannel(target);
         if (ch) {
           label = ch.login;
+          channelId = ch.id;
           channel = await loadChannel(ch.id);
         } else {
           warn(`Could not find a Twitch user for ${key}`);
@@ -359,11 +368,153 @@
     }
     if (token !== state.routeToken) return; // user navigated away meanwhile
 
-    state.map = buildMap([globals, channel]);
-    state.mapVersion++;
+    loadUsage(channelId);
+    state.lists = [globals, channel];
+    applyEmoteLists();
     closePicker();
+    closeEmoteMenu();
     console.info(TAG, `${state.map.size} emotes ready (${channel.length} from ${label})`);
     rescan();
+  }
+
+  // Splits the loaded emotes into those shown in chat and those the user hid. A hidden
+  // emote's word stays text, even if another service has an emote of the same name.
+  function applyEmoteLists() {
+    state.all = new Map();
+    for (const list of state.lists) for (const e of list) state.all.set(e.key, e);
+    state.full = buildMap(state.lists);
+    state.map = new Map();
+    state.hiddenWords = new Map();
+    for (const [code, e] of state.full) (hidden.has(e.key) ? state.hiddenWords : state.map).set(code, e);
+    state.mapVersion++;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Settings and stats, kept in this browser's localStorage for twitch.tv
+  // ---------------------------------------------------------------------------
+
+  const store = {
+    get(name, fallback) {
+      try {
+        const v = localStorage.getItem(`emotekit:${name}`);
+        return v === null ? fallback : JSON.parse(v);
+      } catch { return fallback; }
+    },
+    set(name, value) {
+      try { localStorage.setItem(`emotekit:${name}`, JSON.stringify(value)); } catch { /* full or blocked */ }
+    },
+    remove(name) {
+      try { localStorage.removeItem(`emotekit:${name}`); } catch { /* blocked */ }
+    },
+    // A saved list, or [] if it's missing or damaged.
+    list(name) {
+      const v = this.get(name, []);
+      return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
+    },
+  };
+
+  // Emotes the user turned off (by key). They show as plain text in chat.
+  const hidden = new Set(store.list('hidden'));
+
+  function setHidden(key, on) {
+    if (on === hidden.has(key)) return;
+    if (on) hidden.add(key); else hidden.delete(key);
+    store.set('hidden', [...hidden]);
+    onHiddenChanged();
+  }
+
+  function onHiddenChanged() {
+    applyEmoteLists();
+    refreshChat();
+    if (!pickerIsOpen()) return;
+    if (picker.hideMode) syncHiddenItems();
+    else renderPicker({ keepScroll: true });
+  }
+
+  // How often each emote shows up in this channel's chat, for "Popular here" and ranking.
+  // Scores halve every week, so the list follows what the channel uses now.
+  const USAGE_HALF_LIFE = 7 * 24 * 3600 * 1000;
+  const USAGE_KEEP = 500; // emotes per channel
+  // twitch.tv's localStorage is shared with Twitch's own settings (about 5 MB in total), so
+  // only the channels watched most recently keep their stats.
+  const USAGE_CHANNELS = 40;
+  const usage = { channel: null, scores: new Map(), dirty: false, timer: null };
+
+  function loadUsage(channelId) {
+    if (usage.channel === channelId) return;
+    saveUsage();
+    usage.channel = channelId;
+    usage.scores = new Map();
+    if (!channelId) return;
+    const saved = store.get(`usage:${channelId}`, null);
+    if (!saved || !saved.s || typeof saved.s !== 'object') return;
+    const decay = Math.pow(0.5, Math.max(0, Date.now() - (Number(saved.t) || 0)) / USAGE_HALF_LIFE);
+    for (const [key, n] of Object.entries(saved.s)) if (typeof n === 'number' && n > 0) usage.scores.set(key, n * decay);
+  }
+
+  function countUsage(key) {
+    if (!usage.channel) return;
+    usage.scores.set(key, (usage.scores.get(key) || 0) + 1);
+    usage.dirty = true;
+    if (!usage.timer) usage.timer = setTimeout(saveUsage, 15000);
+  }
+
+  function saveUsage() {
+    clearTimeout(usage.timer);
+    usage.timer = null;
+    if (!usage.channel || !usage.dirty) return;
+    const top = [...usage.scores].filter(([, v]) => v >= 0.05).sort((a, b) => b[1] - a[1]).slice(0, USAGE_KEEP);
+    store.set(`usage:${usage.channel}`, { t: Date.now(), s: Object.fromEntries(top.map(([k, v]) => [k, Math.round(v * 100) / 100])) });
+    usage.dirty = false;
+    const index = store.get('usage-index', {});
+    const channels = index && typeof index === 'object' && !Array.isArray(index) ? index : {};
+    channels[usage.channel] = Date.now();
+    const byAge = Object.entries(channels).sort((a, b) => b[1] - a[1]);
+    for (const [old] of byAge.slice(USAGE_CHANNELS)) {
+      store.remove(`usage:${old}`);
+      delete channels[old];
+    }
+    store.set('usage-index', channels);
+  }
+
+  function score(e) {
+    return usage.scores.get(e.key) || 0;
+  }
+
+  // Sort helper: favourites (0) before the rest (1).
+  function fav(e) {
+    return isFavourite(e.key) ? 0 : 1;
+  }
+
+  // Emotes the user starred (by key, in the order they were added; shared by all channels).
+  let favourites = store.list('favourites');
+
+  function isFavourite(key) {
+    return favourites.includes(key);
+  }
+
+  function setFavourite(key, on) {
+    if (on === isFavourite(key)) return;
+    favourites = on ? [...favourites, key] : favourites.filter((k) => k !== key);
+    store.set('favourites', favourites);
+    if (pickerIsOpen() && !picker.hideMode) renderPicker({ keepScroll: true });
+  }
+
+  function installStorageSync() {
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('pagehide', saveUsage);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) saveUsage(); });
+  }
+
+  // Another tab changed the hidden emotes or favourites.
+  function onStorage(ev) {
+    if (ev.key === 'emotekit:hidden') {
+      hidden.clear();
+      for (const k of store.list('hidden')) hidden.add(k);
+      onHiddenChanged();
+    } else if (ev.key === 'emotekit:favourites') {
+      favourites = store.list('favourites');
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -390,10 +541,20 @@
     if (!deferred) loadImage(img);
     img.alt = e.code; // copying chat text keeps the emote name
     img.decoding = 'async';
+    img.dataset.key = e.key;
     img.dataset.provider = e.provider; // read by the tooltip
     img.dataset.source = e.source;
     img.dataset.large = e.url2x || e.url1x;
     return img;
+  }
+
+  // A hidden emote's name. Click it to show the emote again.
+  function makeHiddenWord(e) {
+    const span = document.createElement('span');
+    span.className = 'emotekit-hidden-word';
+    span.dataset.key = e.key;
+    span.textContent = e.code;
+    return span;
   }
 
   function loadImage(img) {
@@ -405,11 +566,16 @@
     wrap.appendChild(makeImg(e, true));
   }
 
-  function replaceTextNode(node) {
+  // Emotes already counted per chat message. Twitch splits a message into several text
+  // spans around mentions and links, so this is kept per message, not per span.
+  const countedIn = new WeakMap();
+
+  // `counted` (a Set, or null to skip) collects the emotes added to this channel's usage stats.
+  function replaceTextNode(node, counted) {
     const text = node.nodeValue;
     if (!text || !/\S/.test(text)) return false;
     const parts = text.split(/(\s+)/);
-    if (!parts.some((p) => p && state.map.has(p))) return false;
+    if (!parts.some((p) => p && (state.map.has(p) || state.hiddenWords.has(p)))) return false;
 
     const frag = document.createDocumentFragment();
     let buf = '';
@@ -418,10 +584,18 @@
     for (const part of parts) {
       const e = part ? state.map.get(part) : undefined;
       if (!e) {
+        const off = part ? state.hiddenWords.get(part) : undefined;
+        if (off) {
+          if (buf) { frag.appendChild(document.createTextNode(buf)); buf = ''; }
+          frag.appendChild(makeHiddenWord(off));
+          lastEmote = null;
+          continue;
+        }
         buf += part;
         if (/\S/.test(part)) lastEmote = null;
         continue;
       }
+      if (counted && !counted.has(e.key)) { counted.add(e.key); countUsage(e.key); }
       if (e.zeroWidth && lastEmote) {
         attachOverlay(lastEmote, e);
         buf = ''; // the overlay takes the gap's place
@@ -436,23 +610,54 @@
     return true;
   }
 
-  function processFragment(el) {
+  function processFragment(el, count = true) {
     if (!state.map.size || !el || !el.isConnected) return;
     const texts = [];
     for (const child of el.childNodes) {
       if (child.nodeType === 3) texts.push(child);
     }
-    for (const t of texts) replaceTextNode(t);
+    if (!texts.length) return;
+    let counted = null;
+    if (count) {
+      const message = el.closest('.chat-line__message, .vod-message') || el;
+      counted = countedIn.get(message);
+      if (!counted) countedIn.set(message, counted = new Set());
+    }
+    for (const t of texts) replaceTextNode(t, counted);
   }
 
   function processTree(root) {
     if (root.nodeType !== 1) return;
     if (root.matches(FRAGMENT_SELECTOR)) processFragment(root);
-    if (root.firstElementChild) root.querySelectorAll(FRAGMENT_SELECTOR).forEach(processFragment);
+    if (root.firstElementChild) for (const el of root.querySelectorAll(FRAGMENT_SELECTOR)) processFragment(el);
   }
 
-  function rescan() {
-    document.querySelectorAll(FRAGMENT_SELECTOR).forEach(processFragment);
+  function rescan(count = true) {
+    document.querySelectorAll(FRAGMENT_SELECTOR).forEach((el) => processFragment(el, count));
+  }
+
+  // After emotes are hidden or shown: turn chat emotes and hidden words that no longer
+  // match back into text, then render the text again with the current maps.
+  function refreshChat() {
+    const touched = new Set();
+    for (const node of document.querySelectorAll('.emotekit-emote, .emotekit-hidden-word')) {
+      const fragment = node.parentElement;
+      if (!fragment || !fragment.matches(FRAGMENT_SELECTOR)) continue; // picker or tooltip
+      let text;
+      if (node.classList.contains('emotekit-hidden-word')) {
+        const e = state.hiddenWords.get(node.textContent);
+        if (e && e.key === node.dataset.key) continue;
+        text = node.textContent;
+      } else {
+        const imgs = [...node.querySelectorAll('img.emotekit-img')];
+        if (imgs.every((img) => { const e = state.map.get(img.alt); return e && e.key === img.dataset.key; })) continue;
+        text = imgs.map((img) => img.alt).join(' ');
+      }
+      node.replaceWith(document.createTextNode(text));
+      touched.add(fragment);
+    }
+    for (const fragment of touched) fragment.normalize();
+    rescan(false);
   }
 
   function onMutations(mutations) {
@@ -510,6 +715,44 @@
         max-width: 240px;
       }
       .emotekit-tooltip-name { font-weight: 600; }
+      .emotekit-tooltip-hint { margin-top: 2px; color: #adadb8; font-size: 11px; }
+      .emotekit-emote { cursor: pointer; }
+      .emotekit-hidden-word { border-radius: 3px; cursor: pointer; }
+      .emotekit-hidden-word:hover {
+        background: var(--color-background-interactable-hover, rgba(83, 83, 95, 0.48));
+        box-shadow: 0 0 0 2px var(--color-background-interactable-hover, rgba(83, 83, 95, 0.48));
+        text-decoration: underline dotted;
+      }
+      .emotekit-menu {
+        position: fixed;
+        z-index: 2147483646;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 6px;
+        border: 1px solid var(--color-border-base, rgba(83, 83, 95, 0.48));
+        border-radius: 6px;
+        background: var(--color-background-float, #1f1f23);
+        color: var(--color-text-base, #efeff1);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+        font-size: 13px;
+      }
+      .emotekit-menu-row { display: flex; align-items: center; gap: 6px; }
+      .emotekit-menu-name { flex: 1; margin-right: 4px; font-weight: 600; white-space: nowrap; }
+      .emotekit-menu-service { margin-left: 6px; font-weight: 400; font-size: 12px; color: var(--color-text-alt-2, #adadb8); }
+      .emotekit-menu-button {
+        padding: 4px 8px;
+        border: 0;
+        border-radius: 4px;
+        background: var(--color-background-button-secondary-default, rgba(83, 83, 95, 0.38));
+        color: inherit;
+        font: inherit;
+        font-weight: 600;
+        white-space: nowrap;
+        cursor: pointer;
+      }
+      .emotekit-menu-button:hover { background: var(--color-background-button-secondary-hover, rgba(83, 83, 95, 0.55)); }
+      .emotekit-menu-button[aria-pressed="true"] { color: #f5c400; }
       .emotekit-picker-button[aria-expanded="true"] {
         background: var(--color-background-button-text-active, rgba(83, 83, 95, 0.55));
       }
@@ -526,8 +769,10 @@
         font-size: 13px;
         overflow: hidden;
       }
+      .emotekit-picker-bar { display: flex; gap: 6px; margin: 8px; }
       .emotekit-picker-search {
-        margin: 8px;
+        flex: 1;
+        min-width: 0;
         padding: 6px 10px;
         border: 1px solid var(--color-border-input, rgba(222, 222, 227, 0.4));
         border-radius: 4px;
@@ -537,6 +782,53 @@
         outline: none;
       }
       .emotekit-picker-search:focus { border-color: var(--color-text-link, #a970ff); }
+      .emotekit-picker-hide-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 0 10px;
+        border: 0;
+        border-radius: 4px;
+        background: var(--color-background-button-secondary-default, rgba(83, 83, 95, 0.38));
+        color: inherit;
+        font: inherit;
+        font-weight: 600;
+        white-space: nowrap;
+        cursor: pointer;
+      }
+      .emotekit-picker-hide-toggle:hover { background: var(--color-background-button-secondary-hover, rgba(83, 83, 95, 0.55)); }
+      .emotekit-picker-hide-toggle[aria-pressed="true"] {
+        background: var(--color-background-button-primary-default, #9147ff);
+        color: var(--color-text-button-primary, #fff);
+      }
+      .emotekit-picker-notice { margin: 0 8px 6px; font-size: 12px; color: var(--color-text-alt-2, #adadb8); }
+      .emotekit-picker-notice[hidden] { display: none; }
+      .emotekit-picker-hint { margin: 6px 2px 2px; font-size: 12px; color: var(--color-text-alt-2, #adadb8); }
+      .emotekit-picker-manage {
+        display: block;
+        margin: 10px 2px 2px;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: var(--color-text-link, #a970ff);
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .emotekit-picker-manage:hover { text-decoration: underline; }
+      .emotekit-picker-item { position: relative; }
+      .emotekit-picker-item.emotekit-is-hidden .emotekit-emote,
+      .emotekit-picker-item.emotekit-is-hidden .emotekit-picker-name { opacity: 0.3; filter: grayscale(1); }
+      .emotekit-picker-item.emotekit-is-hidden::after {
+        content: "";
+        position: absolute;
+        left: 6px;
+        right: 6px;
+        top: 50%;
+        border-top: 2px solid var(--color-text-base, #efeff1);
+        transform: rotate(-30deg);
+      }
+      .emotekit-hide-mode .emotekit-picker-item:not(.emotekit-is-hidden):hover .emotekit-emote { opacity: 0.6; }
       .emotekit-picker-list { overflow-y: auto; padding: 0 8px 8px; }
       .emotekit-picker-section > h3 {
         margin: 6px 2px 4px;
@@ -545,6 +837,8 @@
         color: var(--color-text-alt-2, #adadb8);
       }
       .emotekit-picker-grid { display: flex; flex-wrap: wrap; gap: 2px; }
+      /* Let the browser skip layout for sections that are scrolled out of view. */
+      .emotekit-picker-section { content-visibility: auto; contain-intrinsic-size: auto 240px; }
       .emotekit-picker-item {
         display: inline-flex;
         align-items: center;
@@ -559,7 +853,6 @@
       }
       .emotekit-picker-item:hover { background: var(--color-background-interactable-hover, rgba(83, 83, 95, 0.48)); }
       .emotekit-picker-item.emotekit-loading { background: var(--color-background-alt-2, rgba(83, 83, 95, 0.3)); background-clip: content-box; }
-      .emotekit-picker-item[hidden], .emotekit-picker-section[hidden], .emotekit-picker-empty[hidden] { display: none; }
       .emotekit-picker-item .emotekit-emote { margin: 0; }
       .emotekit-picker-item .emotekit-img { max-width: 112px; }
       .emotekit-picker-empty { margin: 12px 4px; color: var(--color-text-alt-2, #adadb8); }
@@ -589,6 +882,22 @@
     }
     const el = tooltip.el;
     tooltip.target = wrap;
+    const line = (cls, text) => {
+      const d = document.createElement('div');
+      d.className = cls;
+      d.textContent = text;
+      return d;
+    };
+    if (wrap.classList.contains('emotekit-hidden-word')) {
+      const e = state.all.get(wrap.dataset.key);
+      el.replaceChildren(
+        line('emotekit-tooltip-name', wrap.textContent),
+        line('emotekit-tooltip-meta', `${e ? `${e.provider} · ` : ''}Hidden. Click to show it again.`),
+      );
+      el.style.display = 'block';
+      positionTooltip();
+      return;
+    }
     const imgs = [...wrap.querySelectorAll('img.emotekit-img')];
 
     const preview = document.createElement('div');
@@ -599,18 +908,16 @@
       big.alt = '';
       preview.appendChild(big);
     }
-    const line = (cls, text) => {
-      const d = document.createElement('div');
-      d.className = cls;
-      d.textContent = text;
-      return d;
-    };
     const [base, ...overlays] = imgs;
+    const inChat = !!wrap.parentElement && wrap.parentElement.matches(FRAGMENT_SELECTOR);
     el.replaceChildren(
       preview,
       line('emotekit-tooltip-name', wrap.dataset.emotekit),
       line('emotekit-tooltip-meta', `${base.dataset.provider} · ${base.dataset.source} emote`),
       ...overlays.map((o) => line('emotekit-tooltip-meta', `+ ${o.alt} · ${o.dataset.provider} ${o.dataset.source}`)),
+      ...(hidden.has(base.dataset.key) ? [line('emotekit-tooltip-meta', 'Hidden in chat')] : []),
+      ...(isFavourite(base.dataset.key) ? [line('emotekit-tooltip-meta', '★ Favourite')] : []),
+      ...(inChat ? [line('emotekit-tooltip-hint', 'Click to favourite or hide')] : []),
     );
 
     el.style.display = 'block';
@@ -643,7 +950,8 @@
   }
 
   function onMouseOver(ev) {
-    const wrap = ev.target && ev.target.closest ? ev.target.closest('.emotekit-emote') : null;
+    let wrap = ev.target && ev.target.closest ? ev.target.closest('.emotekit-emote, .emotekit-hidden-word') : null;
+    if (wrap && wrap === emoteMenu.target) wrap = null; // its menu is open
     if (wrap) {
       if (wrap !== tooltip.target) showTooltip(wrap);
       else cancelHide(); // came back before it hid
@@ -665,6 +973,105 @@
     document.addEventListener('mouseover', onMouseOver);
     document.addEventListener('mouseout', (ev) => { if (!ev.relatedTarget && tooltip.target) scheduleHide(); }); // pointer left the window
     document.addEventListener('scroll', onScroll, true);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Clicking an emote in chat opens a small menu to favourite or hide it. Clicking a
+  // hidden emote's name shows the emote again.
+  // ---------------------------------------------------------------------------
+
+  const emoteMenu = { el: null, target: null };
+
+  function openEmoteMenu(wrap) {
+    closeEmoteMenu();
+    hideTooltip();
+    const el = document.createElement('div');
+    el.className = 'emotekit-menu';
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-label', 'Emote options');
+    for (const img of wrap.querySelectorAll('img.emotekit-img')) {
+      const e = state.all.get(img.dataset.key);
+      if (!e) continue;
+      const row = document.createElement('div');
+      row.className = 'emotekit-menu-row';
+      const name = document.createElement('span');
+      name.className = 'emotekit-menu-name';
+      name.textContent = e.code;
+      const service = document.createElement('span');
+      service.className = 'emotekit-menu-service';
+      service.textContent = e.provider;
+      name.appendChild(service);
+      const star = document.createElement('button');
+      star.type = 'button';
+      star.className = 'emotekit-menu-button';
+      const syncStar = () => {
+        const on = isFavourite(e.key);
+        star.textContent = on ? '★ Favourite' : '☆ Favourite';
+        star.setAttribute('aria-pressed', String(on));
+      };
+      syncStar();
+      star.addEventListener('click', () => { setFavourite(e.key, !isFavourite(e.key)); syncStar(); });
+      const hide = document.createElement('button');
+      hide.type = 'button';
+      hide.className = 'emotekit-menu-button';
+      hide.textContent = 'Hide';
+      hide.addEventListener('click', () => { closeEmoteMenu(); setHidden(e.key, true); });
+      row.append(name, star, hide);
+      el.appendChild(row);
+    }
+    if (!el.childElementCount) return;
+    document.body.appendChild(el);
+    emoteMenu.el = el;
+    emoteMenu.target = wrap;
+    positionEmoteMenu();
+  }
+
+  function positionEmoteMenu() {
+    const r = emoteMenu.target.getBoundingClientRect();
+    const t = emoteMenu.el.getBoundingClientRect();
+    const left = Math.max(4, Math.min(r.left + r.width / 2 - t.width / 2, window.innerWidth - t.width - 4));
+    const top = r.top - t.height - 6 >= 4 ? r.top - t.height - 6 : r.bottom + 6;
+    emoteMenu.el.style.left = `${Math.round(left)}px`;
+    emoteMenu.el.style.top = `${Math.round(top)}px`;
+  }
+
+  function closeEmoteMenu() {
+    if (emoteMenu.el) emoteMenu.el.remove();
+    emoteMenu.el = null;
+    emoteMenu.target = null;
+  }
+
+  function onChatClick(ev) {
+    if (ev.button !== 0 || !ev.target.closest) return;
+    const node = ev.target.closest('.emotekit-emote, .emotekit-hidden-word');
+    if (!node || !node.parentElement || !node.parentElement.matches(FRAGMENT_SELECTOR)) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (node.classList.contains('emotekit-hidden-word')) {
+      hideTooltip();
+      setHidden(node.dataset.key, false);
+    } else if (emoteMenu.target === node) {
+      closeEmoteMenu();
+    } else {
+      openEmoteMenu(node);
+    }
+  }
+
+  function installEmoteMenu() {
+    document.addEventListener('click', onChatClick, true); // before Twitch's own handlers
+    document.addEventListener('mousedown', (ev) => {
+      if (!emoteMenu.el) return;
+      if (emoteMenu.el.contains(ev.target) || emoteMenu.target.contains(ev.target)) return;
+      closeEmoteMenu();
+    }, true);
+    document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeEmoteMenu(); });
+    // Follow the emote while chat scrolls; close once it's gone.
+    document.addEventListener('scroll', () => {
+      if (!emoteMenu.el) return;
+      if (emoteMenu.target.isConnected) positionEmoteMenu();
+      else closeEmoteMenu();
+    }, true);
+    window.addEventListener('resize', closeEmoteMenu);
   }
 
   // ---------------------------------------------------------------------------
@@ -738,22 +1145,26 @@
 
   const completion = { matches: null, index: 0, inserted: '' };
 
-  // Exact-case prefix matches first, then case-insensitive ones; shorter names first.
+  // Favourites first, then the most used in this channel. Ties: exact-case matches, then
+  // shorter names.
   function findCompletions(prefix) {
     const lower = prefix.toLowerCase();
-    const exact = [];
-    const loose = [];
-    for (const code of state.map.keys()) {
-      if (code.startsWith(prefix)) exact.push(code);
-      else if (code.toLowerCase().startsWith(lower)) loose.push(code);
+    const matches = [];
+    for (const [code, e] of state.map) {
+      if (code.toLowerCase().startsWith(lower)) matches.push(e);
     }
-    const order = (a, b) => a.length - b.length || a.localeCompare(b);
-    return [...exact.sort(order), ...loose.sort(order)];
+    const exact = (e) => (e.code.startsWith(prefix) ? 0 : 1);
+    matches.sort((a, b) => fav(a) - fav(b) || score(b) - score(a) || exact(a) - exact(b) || a.code.length - b.code.length || a.code.localeCompare(b.code));
+    return matches.map((e) => e.code);
+  }
+
+  function endCompletion() {
+    completion.matches = null;
   }
 
   function onChatKeyDown(ev) {
     if (ev.key !== 'Tab') {
-      if (ev.key !== 'Shift') completion.matches = null;
+      if (ev.key !== 'Shift') endCompletion();
       return;
     }
     if (ev.altKey || ev.ctrlKey || ev.metaKey || ev.isComposing) return;
@@ -768,6 +1179,7 @@
       completion.index = (completion.index + (ev.shiftKey ? n - 1 : 1)) % n;
       removed = completion.inserted;
     } else {
+      endCompletion();
       const prefix = before.match(/\S*$/)[0];
       // @mentions and :emote search belong to Twitch's own autocomplete.
       if (!prefix || /^[@:]/.test(prefix)) return;
@@ -790,21 +1202,32 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Emote picker: a button next to Twitch's emote button opens a searchable list of
-  // every emote in the channel. Clicking one adds it to the message.
+  // Emote picker: a button next to Twitch's emote button opens the channel's emotes.
+  // It opens on what you're likely to want (your favourites, then what this channel's
+  // chat uses most), then every emote by service. "Hide emotes" mode turns emotes off.
   // ---------------------------------------------------------------------------
 
-  const picker = { button: null, panel: null, search: null, list: null, version: -1, loadQueued: false };
+  const picker = {
+    button: null, panel: null, search: null, list: null, hideToggle: null, notice: null,
+    hideMode: false, loadQueued: false,
+    groups: { key: null, nodes: [] }, // service sections, reused until the emotes change
+  };
 
   const PICKER_GROUPS = [
     ['Channel', '7TV'], ['Channel', 'BTTV'], ['Channel', 'FFZ'],
     ['Global', '7TV'], ['Global', 'BTTV'], ['Global', 'FFZ'],
   ];
+  const POPULAR_SHOWN = 100;
+  const RESULTS_SHOWN = 300;
 
   // Four-square grid: distinct from Twitch's smiley. Drawn in Twitch's 24px icon box.
   const PICKER_ICON = '<svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
     + '<rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/>'
     + '<rect x="3" y="13" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/></svg>';
+
+  // Crossed-out eye.
+  const HIDE_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">'
+    + '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path d="M4 20 20 4"/></svg>';
 
   // The button is a copy of Twitch's own emote button with the icon swapped, so it lines up
   // and behaves like the buttons next to it in every browser.
@@ -824,12 +1247,15 @@
     const svg = button.querySelector('svg');
     if (svg) svg.outerHTML = PICKER_ICON;
     else button.innerHTML = PICKER_ICON;
-    button.addEventListener('click', () => (picker.panel && picker.panel.style.display === 'flex' ? closePicker() : openPicker()));
+    button.addEventListener('click', () => (pickerIsOpen() ? closePicker() : openPicker()));
     wrap.appendChild(button);
     slot.parentElement.insertBefore(wrap, slot);
     picker.button = button;
   }
 
+  function pickerIsOpen() {
+    return !!picker.panel && picker.panel.style.display === 'flex';
+  }
 
   function buildPickerPanel() {
     const panel = document.createElement('div');
@@ -837,6 +1263,8 @@
     panel.setAttribute('role', 'dialog');
     panel.setAttribute('aria-label', 'EmoteKit emotes');
 
+    const bar = document.createElement('div');
+    bar.className = 'emotekit-picker-bar';
     const search = document.createElement('input');
     search.type = 'text';
     search.className = 'emotekit-picker-search';
@@ -844,7 +1272,7 @@
     search.setAttribute('aria-label', 'Search emotes');
     search.autocomplete = 'off';
     search.spellcheck = false;
-    search.addEventListener('input', () => filterPicker(search.value));
+    search.addEventListener('input', () => renderPicker());
     search.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter') {
         ev.preventDefault();
@@ -856,86 +1284,183 @@
     // Insert on keyup, not keydown: inserting moves focus to the chat box, and the rest of
     // the Enter keypress would then land there and send the message.
     search.addEventListener('keyup', (ev) => {
-      if (ev.key !== 'Enter' || ev.isComposing) return;
-      const first = [...picker.list.querySelectorAll('.emotekit-picker-item')].find((b) => !b.hidden);
-      if (first) insertIntoChat(first.dataset.code);
+      if (ev.key !== 'Enter' || ev.isComposing || picker.hideMode) return;
+      const first = picker.list.querySelector('.emotekit-picker-item');
+      if (first) onItemClick(first);
     });
+
+    const hideToggle = document.createElement('button');
+    hideToggle.type = 'button';
+    hideToggle.className = 'emotekit-picker-hide-toggle';
+    hideToggle.setAttribute('aria-pressed', 'false');
+    hideToggle.addEventListener('click', () => setHideMode(!picker.hideMode));
+    bar.append(search, hideToggle);
+
+    const notice = document.createElement('p');
+    notice.className = 'emotekit-picker-notice';
+    notice.textContent = 'Click an emote to hide it in chat. Click a hidden one to show it again.';
 
     const list = document.createElement('div');
     list.className = 'emotekit-picker-list';
     list.addEventListener('scroll', queuePickerLoad, { passive: true });
     // Keep focus (and the caret) in the chat box when clicking an emote.
-    list.addEventListener('mousedown', (ev) => { if (ev.target.closest('.emotekit-picker-item')) ev.preventDefault(); });
+    list.addEventListener('mousedown', (ev) => { if (ev.target.closest('button')) ev.preventDefault(); });
     list.addEventListener('click', (ev) => {
       const item = ev.target.closest('.emotekit-picker-item');
-      if (item) insertIntoChat(item.dataset.code);
+      if (item) onItemClick(item);
+      else if (ev.target.closest('.emotekit-picker-manage')) setHideMode(true);
     });
 
-    panel.append(search, list);
+    panel.append(bar, notice, list);
     document.body.appendChild(panel);
-    picker.panel = panel;
-    picker.search = search;
-    picker.list = list;
+    Object.assign(picker, { panel, search, list, hideToggle, notice });
+    setHideMode(false, false);
   }
 
-  function fillPicker() {
+  function onItemClick(item) {
+    const e = state.all.get(item.dataset.key);
+    if (!e) return;
+    if (picker.hideMode) {
+      setHidden(e.key, !hidden.has(e.key));
+      return;
+    }
+    insertIntoChat(e.code);
+  }
+
+  function setHideMode(on, render = true) {
+    picker.hideMode = on;
+    picker.panel.classList.toggle('emotekit-hide-mode', on);
+    picker.hideToggle.setAttribute('aria-pressed', String(on));
+    picker.hideToggle.innerHTML = on ? 'Done' : `${HIDE_ICON}<span>Hide emotes</span>`;
+    picker.notice.hidden = !on;
+    if (render) renderPicker();
+  }
+
+  function makePickerItem(e) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'emotekit-picker-item emotekit-loading'; // grey placeholder until the image arrives
+    if (hidden.has(e.key)) item.classList.add('emotekit-is-hidden');
+    item.dataset.key = e.key;
+    item.dataset.code = e.code;
+    item.setAttribute('aria-label', e.code);
+    const emote = makeEmote(e, true);
+    const img = emote.querySelector('img');
+    img.alt = ''; // the button carries the name
+    img.addEventListener('load', () => item.classList.remove('emotekit-loading'), { once: true });
+    // If the image fails, show the name instead of a broken-image icon.
+    img.addEventListener('error', () => {
+      item.classList.remove('emotekit-loading');
+      emote.replaceWith(Object.assign(document.createElement('span'), { className: 'emotekit-picker-name', textContent: e.code }));
+    }, { once: true });
+    item.appendChild(emote);
+    return item;
+  }
+
+  function pickerSection(title, emotes, count = emotes.length) {
+    const section = document.createElement('section');
+    section.className = 'emotekit-picker-section';
+    const h = document.createElement('h3');
+    h.textContent = `${title} (${count})`;
+    const grid = document.createElement('div');
+    grid.className = 'emotekit-picker-grid';
+    for (const e of emotes) grid.appendChild(makePickerItem(e));
+    section.append(h, grid);
+    return section;
+  }
+
+  function pickerNote(text, className = 'emotekit-picker-empty') {
+    return Object.assign(document.createElement('p'), { className, textContent: text });
+  }
+
+  const byName = (a, b) => a.code.localeCompare(b.code, undefined, { sensitivity: 'base' });
+
+  // The emotes the picker offers: those shown in chat, plus hidden ones in hide mode.
+  function pickerEmotes() {
+    return [...(picker.hideMode ? state.full : state.map).values()];
+  }
+
+  function renderPicker({ keepScroll = false } = {}) {
+    const scrollTop = picker.list.scrollTop;
+    const query = picker.search.value.trim().toLowerCase();
+    const emotes = pickerEmotes();
+    const parts = [];
+
+    if (!state.full.size) {
+      parts.push(pickerNote('Emotes are still loading.'));
+    } else if (query) {
+      const results = emotes.filter((e) => e.code.toLowerCase().includes(query));
+      const starts = (e) => (e.code.toLowerCase().startsWith(query) ? 0 : 1);
+      results.sort((a, b) => starts(a) - starts(b) || fav(a) - fav(b) || score(b) - score(a) || a.code.length - b.code.length || byName(a, b));
+      if (results.length) parts.push(pickerSection('Results', results.slice(0, RESULTS_SHOWN), results.length));
+      else parts.push(pickerNote('No emotes match.'));
+    } else {
+      if (picker.hideMode) {
+        const off = emotes.filter((e) => hidden.has(e.key)).sort(byName);
+        parts.push(off.length ? pickerSection('Hidden', off) : pickerNote('No hidden emotes in this channel yet.'));
+      } else {
+        const starred = favourites.map((k) => state.all.get(k)).filter((e) => e && state.map.get(e.code) === e);
+        parts.push(starred.length ? pickerSection('Favourites', starred)
+          : pickerNote('Click an emote in chat to add it to your favourites.', 'emotekit-picker-hint'));
+      }
+      const popular = emotes.filter((e) => score(e) >= 0.5).sort((a, b) => score(b) - score(a) || byName(a, b)).slice(0, POPULAR_SHOWN);
+      if (popular.length) parts.push(pickerSection('Popular here', popular));
+      else if (!picker.hideMode) parts.push(pickerNote('Popular emotes show up here once some chat has come in.', 'emotekit-picker-hint'));
+      parts.push(...groupSections(emotes));
+      if (!picker.hideMode) {
+        const n = state.hiddenWords.size;
+        if (n) {
+          const manage = document.createElement('button');
+          manage.type = 'button';
+          manage.className = 'emotekit-picker-manage';
+          manage.textContent = `${n} hidden emote${n === 1 ? '' : 's'} · Manage`;
+          parts.push(manage);
+        }
+      }
+    }
+    picker.list.replaceChildren(...parts);
+    picker.list.scrollTop = keepScroll ? scrollTop : 0;
+    loadVisiblePickerImages();
+  }
+
+  // Every emote by service. These are most of the picker (1000+ buttons on big channels), so
+  // they're built once per emote list and mode, and reused on reopen and after a search.
+  function groupSections(emotes) {
+    const key = `${state.mapVersion}:${picker.hideMode}`;
+    if (picker.groups.key === key) return picker.groups.nodes;
     const groups = new Map(PICKER_GROUPS.map(([source, provider]) => [`${source} · ${provider}`, []]));
-    for (const e of state.map.values()) {
+    for (const e of emotes) {
       const g = groups.get(`${e.source} · ${e.provider}`);
       if (g) g.push(e);
     }
-    const sections = [];
-    for (const [title, emotes] of groups) {
-      if (!emotes.length) continue;
-      emotes.sort((a, b) => a.code.localeCompare(b.code, undefined, { sensitivity: 'base' }));
-      const section = document.createElement('section');
-      section.className = 'emotekit-picker-section';
-      const h = document.createElement('h3');
-      h.dataset.title = title;
-      h.textContent = `${title} (${emotes.length})`;
-      const grid = document.createElement('div');
-      grid.className = 'emotekit-picker-grid';
-      for (const e of emotes) {
-        const item = document.createElement('button');
-        item.type = 'button';
-        item.className = 'emotekit-picker-item';
-        item.dataset.code = e.code;
-        item.setAttribute('aria-label', e.code);
-        const emote = makeEmote(e, true);
-        const img = emote.querySelector('img');
-        img.alt = ''; // the button carries the name
-        item.classList.add('emotekit-loading'); // grey placeholder until the image arrives
-        img.addEventListener('load', () => item.classList.remove('emotekit-loading'), { once: true });
-        // If the image fails, show the name instead of a broken-image icon.
-        img.addEventListener('error', () => {
-          item.classList.remove('emotekit-loading');
-          emote.replaceWith(Object.assign(document.createElement('span'), { className: 'emotekit-picker-name', textContent: e.code }));
-        }, { once: true });
-        item.appendChild(emote);
-        grid.appendChild(item);
-      }
-      section.append(h, grid);
-      sections.push(section);
+    const nodes = [];
+    for (const [title, list] of groups) if (list.length) nodes.push(pickerSection(title, list.sort(byName)));
+    picker.groups = { key, nodes };
+    return nodes;
+  }
+
+  // In hide mode, toggling an emote just dims or undims it in place, so nothing jumps.
+  function syncHiddenItems() {
+    for (const item of picker.list.querySelectorAll('.emotekit-picker-item')) {
+      item.classList.toggle('emotekit-is-hidden', hidden.has(item.dataset.key));
     }
-    const empty = document.createElement('p');
-    empty.className = 'emotekit-picker-empty';
-    empty.textContent = state.map.size ? 'No emotes match.' : 'Emotes are still loading.';
-    empty.hidden = sections.length > 0;
-    picker.list.replaceChildren(...sections, empty);
-    picker.version = state.mapVersion;
   }
 
   // Big channels have 1000+ emotes, many of them large animations. Load only what is on
   // screen or about to scroll in, so the visible ones aren't stuck behind the rest.
   function loadVisiblePickerImages() {
-    if (!picker.panel || picker.panel.style.display !== 'flex') return;
+    if (!pickerIsOpen()) return;
     const r = picker.list.getBoundingClientRect();
     const margin = 150;
-    for (const item of picker.list.querySelectorAll('.emotekit-picker-item.emotekit-loading:not([hidden])')) {
-      const b = item.getBoundingClientRect();
-      if (b.bottom < r.top - margin || b.top > r.bottom + margin) continue;
-      const img = item.querySelector('img');
-      if (img && !img.getAttribute('src')) loadImage(img);
+    const near = (b) => b.bottom >= r.top - margin && b.top <= r.bottom + margin;
+    // Check whole sections first; off-screen ones are skipped without measuring their emotes.
+    for (const section of picker.list.querySelectorAll('.emotekit-picker-section')) {
+      if (!near(section.getBoundingClientRect())) continue;
+      for (const item of section.querySelectorAll('.emotekit-picker-item.emotekit-loading')) {
+        if (!near(item.getBoundingClientRect())) continue;
+        const img = item.querySelector('img');
+        if (img && !img.getAttribute('src')) loadImage(img);
+      }
     }
   }
 
@@ -943,25 +1468,6 @@
     if (picker.loadQueued) return;
     picker.loadQueued = true;
     setTimeout(() => { picker.loadQueued = false; loadVisiblePickerImages(); }, 50); // at most every 50 ms while scrolling
-  }
-
-
-  function filterPicker(query) {
-    const q = query.trim().toLowerCase();
-    let any = false;
-    for (const section of picker.list.querySelectorAll('.emotekit-picker-section')) {
-      let shown = 0;
-      for (const item of section.querySelectorAll('.emotekit-picker-item')) {
-        item.hidden = q !== '' && !item.dataset.code.toLowerCase().includes(q);
-        if (!item.hidden) shown++;
-      }
-      section.hidden = shown === 0;
-      const h = section.querySelector('h3');
-      h.textContent = `${h.dataset.title} (${shown})`;
-      if (shown) any = true;
-    }
-    picker.list.querySelector('.emotekit-picker-empty').hidden = any;
-    queuePickerLoad();
   }
 
   function positionPicker() {
@@ -972,25 +1478,22 @@
     picker.panel.style.width = `${width}px`;
     picker.panel.style.left = `${Math.round(left)}px`;
     picker.panel.style.bottom = `${Math.round(window.innerHeight - r.top + 6)}px`;
-    picker.panel.style.maxHeight = `${Math.max(200, Math.min(420, r.top - 16))}px`;
+    picker.panel.style.maxHeight = `${Math.max(200, Math.min(460, r.top - 16))}px`;
   }
 
   function openPicker() {
     if (!picker.button) return;
     if (!picker.panel || !picker.panel.isConnected) buildPickerPanel();
-    if (picker.version !== state.mapVersion || !state.map.size) fillPicker();
     picker.search.value = '';
-    filterPicker('');
     picker.panel.style.display = 'flex';
     positionPicker();
-    picker.list.scrollTop = 0;
-    loadVisiblePickerImages();
+    setHideMode(false); // renders with current stats
     picker.button.setAttribute('aria-expanded', 'true');
     picker.search.focus();
   }
 
   function closePicker() {
-    if (!picker.panel || picker.panel.style.display !== 'flex') return;
+    if (!pickerIsOpen()) return;
     picker.panel.style.display = 'none';
     if (picker.button) picker.button.setAttribute('aria-expanded', 'false');
     hideTooltip();
@@ -1000,7 +1503,7 @@
     ensurePickerButton();
     // Close on a click outside the picker and its button, or on Escape anywhere.
     document.addEventListener('mousedown', (ev) => {
-      if (!picker.panel || picker.panel.style.display !== 'flex') return;
+      if (!pickerIsOpen()) return;
       if (picker.panel.contains(ev.target) || (picker.button && picker.button.contains(ev.target))) return;
       closePicker();
     }, true);
@@ -1017,7 +1520,10 @@
     buildMap, channelFromPath, processFragment, processTree, onMutations, rescan, state,
     installTooltip, tooltip,
     installCompletion, findCompletions, completion, insertIntoChat,
-    installPicker, ensurePickerButton, openPicker, closePicker, filterPicker, picker,
+    installPicker, ensurePickerButton, openPicker, closePicker, renderPicker, picker,
+    setHidden, hidden, refreshChat, applyEmoteLists, loadUsage, saveUsage, countUsage, usage, score,
+    setFavourite, isFavourite, getFavourites: () => favourites,
+    installEmoteMenu, emoteMenu, closeEmoteMenu, installStorageSync,
   };
 
   // Test hook: tests set this object before loading the script.
@@ -1032,6 +1538,8 @@
     installTooltip();
     installCompletion();
     installPicker();
+    installEmoteMenu();
+    installStorageSync();
     new MutationObserver(onMutations).observe(document.documentElement, {
       childList: true, subtree: true, characterData: true,
     });
