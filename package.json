@@ -1,0 +1,13 @@
+{
+  "name": "emotekit",
+  "version": "0.1.0",
+  "description": "BetterTTV, FrankerFaceZ and 7TV emotes in Twitch chat, for Safari on Mac.",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "test": "node test/emotekit.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0"
+  }
+}
