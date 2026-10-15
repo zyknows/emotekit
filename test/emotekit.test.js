@@ -191,6 +191,46 @@ function loadInternals() {
     assert.strictEqual(el.querySelectorAll('.emotekit-overlay').length, 0);
   });
 
+  await test('hover tooltip: appears on mouseover with name, service and overlays; hides on leave', () => {
+    k.installTooltip();
+    const el = msg('catJAM RainTime hi');
+    k.processFragment(el);
+    const wrap = el.querySelector('.emotekit-emote');
+    assert.strictEqual(wrap.title, '', 'no slow native title tooltip');
+    const over = (target, related) => target.dispatchEvent(new dom.window.MouseEvent('mouseover', { bubbles: true, relatedTarget: related }));
+    over(wrap.querySelector('img'));
+    const tip = doc.querySelector('.emotekit-tooltip');
+    assert.ok(tip && tip.style.display === 'block', 'shown immediately');
+    assert.strictEqual(tip.querySelector('.emotekit-tooltip-name').textContent, 'catJAM');
+    assert.deepStrictEqual([...tip.querySelectorAll('.emotekit-tooltip-meta')].map((d) => d.textContent),
+      ['BTTV · Channel emote', '+ RainTime · 7TV Global']);
+    assert.deepStrictEqual([...tip.querySelectorAll('.emotekit-tooltip-preview img')].map((i) => i.src),
+      ['https://cdn.betterttv.net/emote/b3/2x', 'https://cdn.7tv.app/emote/s1/2x.webp'], 'large images, overlay stacked');
+    over(el);
+    assert.strictEqual(tip.style.display, 'none', 'hidden when the pointer moves off');
+    over(wrap);
+    let underPointer = true; // jsdom has no real pointer, so stub :hover
+    const realMatches = wrap.matches;
+    wrap.matches = (sel) => (sel === ':hover' ? underPointer : realMatches.call(wrap, sel));
+    doc.dispatchEvent(new dom.window.Event('scroll'));
+    assert.strictEqual(tip.style.display, 'block', 'stays up on scroll while the emote is still under the pointer');
+    underPointer = false;
+    doc.dispatchEvent(new dom.window.Event('scroll'));
+    assert.strictEqual(tip.style.display, 'none', 'hidden once the emote has scrolled away');
+  });
+
+  await test('hover tooltip: emote names are shown as text, not HTML', () => {
+    const name = '<b>pwn</b>';
+    k.state.map.set(name, { code: name, provider: '7TV', source: 'Channel', url1x: 'https://x/1x.webp', url2x: null, zeroWidth: false });
+    const el = msg(name);
+    k.processFragment(el);
+    el.querySelector('.emotekit-emote').dispatchEvent(new dom.window.MouseEvent('mouseover', { bubbles: true }));
+    const tip = doc.querySelector('.emotekit-tooltip');
+    assert.strictEqual(tip.querySelector('.emotekit-tooltip-name').textContent, name);
+    assert.strictEqual(tip.querySelectorAll('b').length, 0, 'no injected markup');
+    k.state.map.delete(name);
+  });
+
   await test('idempotent on repeat processing', () => {
     const el = msg('Clap Clap');
     k.processFragment(el);

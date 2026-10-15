@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EmoteKit for Twitch
 // @namespace    https://github.com/zyknows/emotekit
-// @version      0.1.1
+// @version      0.1.2
 // @description  Shows BetterTTV, FrankerFaceZ and 7TV emotes in Twitch chat.
 // @author       Volkan
 // @license      MIT
@@ -375,7 +375,6 @@
     wrap.className = 'emotekit-emote';
     wrap.dataset.emotekit = e.code;
     wrap.appendChild(makeImg(e, false));
-    wrap.title = `${e.code}\n${e.provider} ${e.source}`;
     return wrap;
   }
 
@@ -386,12 +385,14 @@
     if (e.url2x) img.srcset = `${e.url1x} 1x, ${e.url2x} 2x`;
     img.alt = e.code; // copying chat text keeps the emote name
     img.decoding = 'async';
+    img.dataset.provider = e.provider; // read by the tooltip
+    img.dataset.source = e.source;
+    img.dataset.large = e.url2x || e.url1x;
     return img;
   }
 
   function attachOverlay(wrap, e) {
     wrap.appendChild(makeImg(e, true));
-    wrap.title += `\n+ ${e.code} (${e.provider})`;
   }
 
   function replaceTextNode(node) {
@@ -473,8 +474,113 @@
         max-width: none;
       }
       .emotekit-emote > .emotekit-overlay { pointer-events: none; }
+      .emotekit-tooltip {
+        position: fixed;
+        z-index: 10000;
+        display: none;
+        pointer-events: none;
+        max-width: 260px;
+        padding: 6px 10px 7px;
+        border-radius: 6px;
+        background: #0e0e10;
+        color: #efeff1;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        font-family: inherit;
+        font-size: 13px;
+        line-height: 1.35;
+        text-align: center;
+        overflow-wrap: anywhere;
+      }
+      .emotekit-tooltip-preview { display: inline-grid; margin: 2px 0 4px; }
+      .emotekit-tooltip-preview > img {
+        grid-area: 1 / 1;
+        place-self: center;
+        height: ${h * 2}px;
+        width: auto;
+        max-width: 240px;
+      }
+      .emotekit-tooltip-name { font-weight: 600; }
+      .emotekit-tooltip-meta { color: #adadb8; font-size: 12px; }
     `;
     (document.head || document.documentElement).appendChild(style);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tooltip: shown immediately on hover (a native title tooltip takes about a second in Safari)
+  // ---------------------------------------------------------------------------
+
+  const tooltip = { el: null, target: null };
+
+  function showTooltip(wrap) {
+    if (!tooltip.el || !tooltip.el.isConnected) {
+      tooltip.el = document.createElement('div');
+      tooltip.el.className = 'emotekit-tooltip';
+      tooltip.el.setAttribute('role', 'tooltip');
+      document.body.appendChild(tooltip.el);
+    }
+    const el = tooltip.el;
+    tooltip.target = wrap;
+    const imgs = [...wrap.querySelectorAll('img.emotekit-img')];
+
+    const preview = document.createElement('div');
+    preview.className = 'emotekit-tooltip-preview';
+    for (const img of imgs) {
+      const big = document.createElement('img');
+      big.src = img.dataset.large || img.src;
+      big.alt = '';
+      preview.appendChild(big);
+    }
+    const line = (cls, text) => {
+      const d = document.createElement('div');
+      d.className = cls;
+      d.textContent = text;
+      return d;
+    };
+    const [base, ...overlays] = imgs;
+    el.replaceChildren(
+      preview,
+      line('emotekit-tooltip-name', base.alt),
+      line('emotekit-tooltip-meta', `${base.dataset.provider} · ${base.dataset.source} emote`),
+      ...overlays.map((o) => line('emotekit-tooltip-meta', `+ ${o.alt} · ${o.dataset.provider} ${o.dataset.source}`)),
+    );
+
+    el.style.display = 'block';
+    positionTooltip();
+  }
+
+  function positionTooltip() {
+    const el = tooltip.el;
+    const r = tooltip.target.getBoundingClientRect();
+    const t = el.getBoundingClientRect();
+    const left = Math.max(4, Math.min(r.left + r.width / 2 - t.width / 2, window.innerWidth - t.width - 4));
+    const top = r.top - t.height - 6 >= 4 ? r.top - t.height - 6 : r.bottom + 6;
+    el.style.left = `${Math.round(left)}px`;
+    el.style.top = `${Math.round(top)}px`;
+  }
+
+  function hideTooltip() {
+    tooltip.target = null;
+    if (tooltip.el) tooltip.el.style.display = 'none';
+  }
+
+  function onMouseOver(ev) {
+    const wrap = ev.target && ev.target.closest ? ev.target.closest('.emotekit-emote') : null;
+    if (wrap) { if (wrap !== tooltip.target) showTooltip(wrap); } else if (tooltip.target) hideTooltip();
+  }
+
+  // Busy chat scrolls several times a second. Keep the tooltip on its emote while the pointer
+  // is still on it, and hide it once the emote has moved away or been removed.
+  function onScroll() {
+    const t = tooltip.target;
+    if (!t) return;
+    if (t.isConnected && t.matches(':hover')) positionTooltip();
+    else hideTooltip();
+  }
+
+  function installTooltip() {
+    document.addEventListener('mouseover', onMouseOver);
+    document.addEventListener('mouseout', (ev) => { if (!ev.relatedTarget) hideTooltip(); }); // pointer left the window
+    document.addEventListener('scroll', onScroll, true);
   }
 
   // ---------------------------------------------------------------------------
@@ -484,6 +590,7 @@
   const api = {
     parseBttv, parseBttvChannel, parseFfzGlobal, parseFfzRoom, parse7tvGlobal, parse7tvUser,
     buildMap, channelFromPath, processFragment, processTree, onMutations, rescan, state,
+    installTooltip, tooltip,
   };
 
   // Test hook: tests set this object before loading the script.
@@ -495,6 +602,7 @@
   function start() {
     if (document.getElementById('emotekit-style')) return; // already running
     injectStyle();
+    installTooltip();
     new MutationObserver(onMutations).observe(document.documentElement, {
       childList: true, subtree: true, characterData: true,
     });

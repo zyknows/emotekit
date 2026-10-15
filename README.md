@@ -21,7 +21,8 @@ It is a single file with no dependencies. It also works in Chrome and Firefox wi
 - Replaces exact, case-sensitive matches in chat messages.
 - Zero-width emotes (for example 7TV `RainTime`) are drawn on top of the emote before them.
 - Uses 2x images on high-DPI screens.
-- Hovering an emote shows its name and source. Copied chat text keeps the emote names.
+- Hovering an emote immediately shows a larger preview, its name and service, and any zero-width emotes on it.
+- Copied chat text keeps the emote names.
 - Reloads emotes when you switch channels.
 
 If two emotes share a name, a channel emote is used over a global one, and 7TV is used over BTTV, which is used over FFZ.
