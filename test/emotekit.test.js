@@ -101,6 +101,13 @@ function loadInternals() {
     assert.deepStrictEqual(A(k.parse7tvGlobal({ emotes: [null, { name: 'x' }] })), []);
   });
 
+  await test('header: version matches package.json, runs in content context', () => {
+    const header = SRC.slice(0, SRC.indexOf('==/UserScript=='));
+    const pkg = JSON.parse(fs.readFileSync(require('path').join(__dirname, '..', 'package.json'), 'utf8'));
+    assert.strictEqual(header.match(/@version\s+(\S+)/)[1], pkg.version);
+    assert.match(header, /@inject-into\s+content/);
+  });
+
   await test('channelFromPath', () => {
     const c = k.channelFromPath;
     assert.deepStrictEqual({ ...c('/xQcOW') }, { login: 'xqcow' });

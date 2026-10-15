@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EmoteKit for Twitch
 // @namespace    https://github.com/zyknows/emotekit
-// @version      0.1.0
+// @version      0.1.1
 // @description  Shows BetterTTV, FrankerFaceZ and 7TV emotes in Twitch chat.
 // @author       Volkan
 // @license      MIT
@@ -12,6 +12,7 @@
 // @match        https://www.twitch.tv/*
 // @match        https://twitch.tv/*
 // @run-at       document-end
+// @inject-into  content
 // @grant        GM.xmlHttpRequest
 // @grant        GM_xmlhttpRequest
 // @connect      api.betterttv.net
