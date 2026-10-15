@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EmoteKit for Twitch
 // @namespace    https://github.com/zyknows/emotekit
-// @version      0.2.0
+// @version      0.2.1
 // @description  Shows BetterTTV, FrankerFaceZ and 7TV emotes in Twitch chat.
 // @author       Volkan
 // @license      MIT
@@ -510,24 +510,8 @@
         max-width: 240px;
       }
       .emotekit-tooltip-name { font-weight: 600; }
-      .emotekit-picker-slot { display: inline-block; }
-      .emotekit-picker-button {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 32px;
-        height: 32px;
-        padding: 0;
-        border: 0;
-        border-radius: 4px;
-        background: transparent;
-        color: var(--color-fill-button-icon, #efeff1);
-        fill: currentColor;
-        cursor: pointer;
-      }
-      .emotekit-picker-button:hover,
       .emotekit-picker-button[aria-expanded="true"] {
-        background: var(--color-background-button-text-hover, rgba(83, 83, 95, 0.48));
+        background: var(--color-background-button-text-active, rgba(83, 83, 95, 0.55));
       }
       .emotekit-picker {
         position: fixed;
@@ -574,6 +558,7 @@
         cursor: pointer;
       }
       .emotekit-picker-item:hover { background: var(--color-background-interactable-hover, rgba(83, 83, 95, 0.48)); }
+      .emotekit-picker-item.emotekit-loading { background: var(--color-background-alt-2, rgba(83, 83, 95, 0.3)); background-clip: content-box; }
       .emotekit-picker-item[hidden], .emotekit-picker-section[hidden], .emotekit-picker-empty[hidden] { display: none; }
       .emotekit-picker-item .emotekit-emote { margin: 0; }
       .emotekit-picker-item .emotekit-img { max-width: 112px; }
@@ -809,34 +794,42 @@
   // every emote in the channel. Clicking one adds it to the message.
   // ---------------------------------------------------------------------------
 
-  const picker = { button: null, panel: null, search: null, list: null, version: -1, observer: null };
+  const picker = { button: null, panel: null, search: null, list: null, version: -1, loadQueued: false };
 
   const PICKER_GROUPS = [
     ['Channel', '7TV'], ['Channel', 'BTTV'], ['Channel', 'FFZ'],
     ['Global', '7TV'], ['Global', 'BTTV'], ['Global', 'FFZ'],
   ];
 
+  // Four-square grid: distinct from Twitch's smiley. Drawn in Twitch's 24px icon box.
+  const PICKER_ICON = '<svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+    + '<rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/>'
+    + '<rect x="3" y="13" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/></svg>';
+
+  // The button is a copy of Twitch's own emote button with the icon swapped, so it lines up
+  // and behaves like the buttons next to it in every browser.
   function ensurePickerButton() {
     if (picker.button && picker.button.isConnected) return;
     const twitchButton = document.querySelector('[data-a-target="emote-picker-button"]');
     const slot = twitchButton && twitchButton.parentElement;
     if (!slot || !slot.parentElement) return;
-    const wrap = document.createElement('div');
-    wrap.className = 'emotekit-picker-slot';
-    const button = document.createElement('button');
+    const wrap = slot.cloneNode(false);
+    wrap.classList.add('emotekit-picker-slot');
+    const button = twitchButton.cloneNode(true);
+    for (const a of [...button.attributes]) if (a.name.startsWith('data-')) button.removeAttribute(a.name);
     button.type = 'button';
-    button.className = 'emotekit-picker-button';
+    button.classList.add('emotekit-picker-button');
     button.setAttribute('aria-label', 'EmoteKit emotes');
     button.setAttribute('aria-expanded', 'false');
-    // Four-square grid: distinct from Twitch's smiley.
-    button.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" focusable="false">'
-      + '<rect x="2" y="2" width="7" height="7" rx="2"/><rect x="11" y="2" width="7" height="7" rx="2"/>'
-      + '<rect x="2" y="11" width="7" height="7" rx="2"/><rect x="11" y="11" width="7" height="7" rx="2"/></svg>';
+    const svg = button.querySelector('svg');
+    if (svg) svg.outerHTML = PICKER_ICON;
+    else button.innerHTML = PICKER_ICON;
     button.addEventListener('click', () => (picker.panel && picker.panel.style.display === 'flex' ? closePicker() : openPicker()));
     wrap.appendChild(button);
     slot.parentElement.insertBefore(wrap, slot);
     picker.button = button;
   }
+
 
   function buildPickerPanel() {
     const panel = document.createElement('div');
@@ -870,6 +863,7 @@
 
     const list = document.createElement('div');
     list.className = 'emotekit-picker-list';
+    list.addEventListener('scroll', queuePickerLoad, { passive: true });
     // Keep focus (and the caret) in the chat box when clicking an emote.
     list.addEventListener('mousedown', (ev) => { if (ev.target.closest('.emotekit-picker-item')) ev.preventDefault(); });
     list.addEventListener('click', (ev) => {
@@ -910,8 +904,11 @@
         const emote = makeEmote(e, true);
         const img = emote.querySelector('img');
         img.alt = ''; // the button carries the name
+        item.classList.add('emotekit-loading'); // grey placeholder until the image arrives
+        img.addEventListener('load', () => item.classList.remove('emotekit-loading'), { once: true });
         // If the image fails, show the name instead of a broken-image icon.
         img.addEventListener('error', () => {
+          item.classList.remove('emotekit-loading');
           emote.replaceWith(Object.assign(document.createElement('span'), { className: 'emotekit-picker-name', textContent: e.code }));
         }, { once: true });
         item.appendChild(emote);
@@ -926,24 +923,28 @@
     empty.hidden = sections.length > 0;
     picker.list.replaceChildren(...sections, empty);
     picker.version = state.mapVersion;
-    observePickerImages();
   }
 
   // Big channels have 1000+ emotes, many of them large animations. Load only what is on
   // screen or about to scroll in, so the visible ones aren't stuck behind the rest.
-  function observePickerImages() {
-    const imgs = picker.list.querySelectorAll('.emotekit-picker-item img');
-    if (typeof IntersectionObserver === 'undefined') { imgs.forEach(loadImage); return; }
-    if (picker.observer) picker.observer.disconnect();
-    picker.observer = new IntersectionObserver((entries) => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
-        loadImage(entry.target);
-        picker.observer.unobserve(entry.target);
-      }
-    }, { root: picker.list, rootMargin: '120px 0px' });
-    imgs.forEach((img) => picker.observer.observe(img));
+  function loadVisiblePickerImages() {
+    if (!picker.panel || picker.panel.style.display !== 'flex') return;
+    const r = picker.list.getBoundingClientRect();
+    const margin = 150;
+    for (const item of picker.list.querySelectorAll('.emotekit-picker-item.emotekit-loading:not([hidden])')) {
+      const b = item.getBoundingClientRect();
+      if (b.bottom < r.top - margin || b.top > r.bottom + margin) continue;
+      const img = item.querySelector('img');
+      if (img && !img.getAttribute('src')) loadImage(img);
+    }
   }
+
+  function queuePickerLoad() {
+    if (picker.loadQueued) return;
+    picker.loadQueued = true;
+    setTimeout(() => { picker.loadQueued = false; loadVisiblePickerImages(); }, 50); // at most every 50 ms while scrolling
+  }
+
 
   function filterPicker(query) {
     const q = query.trim().toLowerCase();
@@ -960,6 +961,7 @@
       if (shown) any = true;
     }
     picker.list.querySelector('.emotekit-picker-empty').hidden = any;
+    queuePickerLoad();
   }
 
   function positionPicker() {
@@ -982,6 +984,7 @@
     picker.panel.style.display = 'flex';
     positionPicker();
     picker.list.scrollTop = 0;
+    loadVisiblePickerImages();
     picker.button.setAttribute('aria-expanded', 'true');
     picker.search.focus();
   }

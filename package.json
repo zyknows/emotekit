@@ -1,6 +1,6 @@
 {
   "name": "emotekit",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Shows BetterTTV, FrankerFaceZ and 7TV emotes in Twitch chat.",
   "private": true,
   "license": "MIT",

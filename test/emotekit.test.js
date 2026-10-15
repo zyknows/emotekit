@@ -285,7 +285,7 @@ function loadInternals() {
   const fakeChatInput = () => {
     const box = doc.createElement('div');
     box.className = 'chat-input__textarea';
-    box.innerHTML = '<div class="row"><div class="slot"><button data-a-target="emote-picker-button">:)</button></div></div>';
+    box.innerHTML = '<div class="row"><div class="slot tw-slot"><button class="tw-btn" aria-label="Emote picker" data-a-target="emote-picker-button" data-test-selector="x"><div class="tw-fig"><svg><path d="M0 0"/></svg></div></button></div></div>';
     const el = doc.createElement('div');
     el.setAttribute('data-a-target', 'chat-input');
     el.setAttribute('contenteditable', 'true');
@@ -374,6 +374,10 @@ function loadInternals() {
     assert.strictEqual(button.parentElement.nextElementSibling, doc.querySelector('[data-a-target="emote-picker-button"]').parentElement, 'next to Twitch\'s emote button');
     k.ensurePickerButton();
     assert.strictEqual(doc.querySelectorAll('.emotekit-picker-button').length, 1, 'added only once');
+    assert.ok(button.classList.contains('tw-btn') && button.parentElement.classList.contains('tw-slot'), 'copies Twitch\'s button classes so it lines up');
+    assert.ok(button.querySelector('.tw-fig rect'), 'Twitch\'s icon wrapper kept, icon swapped');
+    assert.strictEqual(doc.querySelectorAll('[data-a-target="emote-picker-button"]').length, 1, 'does not copy Twitch\'s data attributes');
+    assert.strictEqual(button.getAttribute('aria-label'), 'EmoteKit emotes');
 
     button.click();
     const panel = doc.querySelector('.emotekit-picker');
@@ -382,6 +386,11 @@ function loadInternals() {
     const headings = [...panel.querySelectorAll('h3')].map((h) => h.textContent);
     assert.deepStrictEqual(headings, ['Channel · 7TV (2)', 'Channel · BTTV (1)', 'Channel · FFZ (1)', 'Global · 7TV (1)', 'Global · BTTV (2)', 'Global · FFZ (2)']);
     const codes = () => [...panel.querySelectorAll('.emotekit-picker-item')].filter((i) => !i.hidden).map((i) => i.dataset.code);
+    const clapItem = panel.querySelector('[data-code="Clap"]');
+    assert.ok(clapItem.querySelector('img').getAttribute('src'), 'visible images start loading when the picker opens');
+    assert.ok(clapItem.classList.contains('emotekit-loading'), 'placeholder while loading');
+    clapItem.querySelector('img').dispatchEvent(new dom.window.Event('load'));
+    assert.ok(!clapItem.classList.contains('emotekit-loading'), 'placeholder removed once loaded');
     assert.ok(codes().includes('pepeD') && codes().filter((c) => c === 'pepeD').length === 1, 'shadowed duplicates appear once');
 
     const search = panel.querySelector('.emotekit-picker-search');
