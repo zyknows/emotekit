@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EmoteKit for Twitch
 // @namespace    https://github.com/zyknows/emotekit
-// @version      0.1.2
+// @version      0.1.3
 // @description  Shows BetterTTV, FrankerFaceZ and 7TV emotes in Twitch chat.
 // @author       Volkan
 // @license      MIT
@@ -509,9 +509,14 @@
   // Tooltip: shown immediately on hover (a native title tooltip takes about a second in Safari)
   // ---------------------------------------------------------------------------
 
-  const tooltip = { el: null, target: null };
+  // How long the tooltip stays up after the pointer leaves its emote, so it doesn't flicker
+  // away in busy chat. Moving onto another emote still switches immediately.
+  const TOOLTIP_HIDE_DELAY = 300; // ms
+
+  const tooltip = { el: null, target: null, hideTimer: null };
 
   function showTooltip(wrap) {
+    cancelHide();
     if (!tooltip.el || !tooltip.el.isConnected) {
       tooltip.el = document.createElement('div');
       tooltip.el.className = 'emotekit-tooltip';
@@ -558,28 +563,43 @@
     el.style.top = `${Math.round(top)}px`;
   }
 
+  function scheduleHide() {
+    if (!tooltip.hideTimer) tooltip.hideTimer = setTimeout(hideTooltip, TOOLTIP_HIDE_DELAY);
+  }
+
+  function cancelHide() {
+    clearTimeout(tooltip.hideTimer);
+    tooltip.hideTimer = null;
+  }
+
   function hideTooltip() {
+    cancelHide();
     tooltip.target = null;
     if (tooltip.el) tooltip.el.style.display = 'none';
   }
 
   function onMouseOver(ev) {
     const wrap = ev.target && ev.target.closest ? ev.target.closest('.emotekit-emote') : null;
-    if (wrap) { if (wrap !== tooltip.target) showTooltip(wrap); } else if (tooltip.target) hideTooltip();
+    if (wrap) {
+      if (wrap !== tooltip.target) showTooltip(wrap);
+      else cancelHide(); // came back before it hid
+    } else if (tooltip.target) {
+      scheduleHide();
+    }
   }
 
-  // Busy chat scrolls several times a second. Keep the tooltip on its emote while the pointer
-  // is still on it, and hide it once the emote has moved away or been removed.
+  // Busy chat scrolls several times a second. Keep the tooltip on its emote, and start the
+  // hide delay once the emote has moved out from under the pointer or been removed.
   function onScroll() {
     const t = tooltip.target;
     if (!t) return;
-    if (t.isConnected && t.matches(':hover')) positionTooltip();
-    else hideTooltip();
+    if (t.isConnected) positionTooltip();
+    if (!t.isConnected || !t.matches(':hover')) scheduleHide();
   }
 
   function installTooltip() {
     document.addEventListener('mouseover', onMouseOver);
-    document.addEventListener('mouseout', (ev) => { if (!ev.relatedTarget) hideTooltip(); }); // pointer left the window
+    document.addEventListener('mouseout', (ev) => { if (!ev.relatedTarget && tooltip.target) scheduleHide(); }); // pointer left the window
     document.addEventListener('scroll', onScroll, true);
   }
 

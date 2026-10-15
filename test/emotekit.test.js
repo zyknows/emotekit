@@ -191,7 +191,7 @@ function loadInternals() {
     assert.strictEqual(el.querySelectorAll('.emotekit-overlay').length, 0);
   });
 
-  await test('hover tooltip: appears on mouseover with name, service and overlays; hides on leave', () => {
+  await test('hover tooltip: appears on mouseover with name, service and overlays; hides on leave', async () => {
     k.installTooltip();
     const el = msg('catJAM RainTime hi');
     k.processFragment(el);
@@ -206,17 +206,38 @@ function loadInternals() {
       ['BTTV · Channel emote', '+ RainTime · 7TV Global']);
     assert.deepStrictEqual([...tip.querySelectorAll('.emotekit-tooltip-preview img')].map((i) => i.src),
       ['https://cdn.betterttv.net/emote/b3/2x', 'https://cdn.7tv.app/emote/s1/2x.webp'], 'large images, overlay stacked');
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
     over(el);
-    assert.strictEqual(tip.style.display, 'none', 'hidden when the pointer moves off');
+    assert.strictEqual(tip.style.display, 'block', 'stays up briefly after the pointer moves off');
+    await wait(150);
+    over(wrap);
+    await wait(250);
+    assert.strictEqual(tip.style.display, 'block', 'coming back before the delay ends keeps it up');
+    over(el);
+    await wait(350);
+    assert.strictEqual(tip.style.display, 'none', 'hidden once the delay has passed');
+
+    const other = msg('KEKW');
+    k.processFragment(other);
+    over(wrap);
+    over(other.querySelector('.emotekit-emote'));
+    assert.strictEqual(tip.querySelector('.emotekit-tooltip-name').textContent, 'KEKW', 'switches to another emote immediately');
+    await wait(350);
+    assert.strictEqual(tip.style.display, 'block', 'no pending hide carried over from the switch');
+
     over(wrap);
     let underPointer = true; // jsdom has no real pointer, so stub :hover
     const realMatches = wrap.matches;
     wrap.matches = (sel) => (sel === ':hover' ? underPointer : realMatches.call(wrap, sel));
     doc.dispatchEvent(new dom.window.Event('scroll'));
+    await wait(350);
     assert.strictEqual(tip.style.display, 'block', 'stays up on scroll while the emote is still under the pointer');
     underPointer = false;
     doc.dispatchEvent(new dom.window.Event('scroll'));
-    assert.strictEqual(tip.style.display, 'none', 'hidden once the emote has scrolled away');
+    assert.strictEqual(tip.style.display, 'block', 'still up right after the emote scrolls away');
+    await wait(350);
+    assert.strictEqual(tip.style.display, 'none', 'hidden once the delay has passed after scrolling away');
   });
 
   await test('hover tooltip: emote names are shown as text, not HTML', () => {
