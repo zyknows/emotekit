@@ -1,66 +1,63 @@
 # EmoteKit for Twitch
 
-See BetterTTV, FrankerFaceZ and 7TV emotes in Twitch chat on **Safari for Mac**.
+A userscript that shows BetterTTV, FrankerFaceZ and 7TV emotes in Twitch chat.
 
-BTTV and 7TV don't ship Safari extensions, so in Safari chat is full of words like `OMEGALUL`, `catJAM` and `KEKW` instead of pictures. EmoteKit is a small userscript that loads the emotes each channel has enabled on all three services and shows them in chat, live, in popout chat and in VOD replays.
+BTTV and 7TV have no Safari extension, so in Safari these emotes show up as plain text (`OMEGALUL`, `catJAM`, `KEKW`). EmoteKit replaces them with the images. It works in live chat, popout chat and VOD chat replay.
 
-It's one file, has no dependencies, and also works in Chrome and Firefox with any userscript manager.
+It is a single file with no dependencies. It also works in Chrome and Firefox with a userscript manager.
 
 ## Install (Safari on Mac)
 
-1. Install **[Userscripts](https://github.com/quoid/userscripts)** from the Mac App Store (free, open source; search "Userscripts").
-2. In Safari, open **Settings → Extensions**, turn on **Userscripts**, and allow it on `twitch.tv`.
-3. Open [`emotekit.user.js`](https://raw.githubusercontent.com/zyknows/emotekit/main/emotekit.user.js) in Safari, click the Userscripts icon in the toolbar, and choose **Install**.
-4. Open any Twitch channel. Emotes appear as soon as they load.
+1. Install [Userscripts](https://github.com/quoid/userscripts) from the Mac App Store.
+2. In Safari, open **Settings → Extensions**, enable **Userscripts**, and allow it on `twitch.tv`.
+3. Open [`emotekit.user.js`](https://raw.githubusercontent.com/zyknows/emotekit/main/emotekit.user.js), click the Userscripts toolbar icon, and choose **Install**.
+4. Open a Twitch channel.
 
 **Chrome / Firefox:** install Tampermonkey or Violentmonkey, then open the same link.
 
-## What it does
+## Behaviour
 
-- Loads **global** emotes from BTTV, FFZ and 7TV, plus the **channel's own** emotes on each service.
-- Replaces matching words in chat with the emote image. Matching is exact and case-sensitive, the same as the official extensions.
-- Stacks **zero-width emotes** (7TV overlays like `RainTime`, BTTV hats like `SantaHat`) on top of the emote before them.
-- Uses 2x images on Retina screens.
-- Hover an emote to see its name and which service it's from. Copying chat text keeps the emote names.
-- Follows you as you switch channels without a page reload.
+- Loads global emotes and the current channel's emotes from BTTV, FFZ and 7TV.
+- Replaces exact, case-sensitive matches in chat messages.
+- Zero-width emotes (for example 7TV `RainTime`) are drawn on top of the emote before them.
+- Uses 2x images on high-DPI screens.
+- Hovering an emote shows its name and source. Copied chat text keeps the emote names.
+- Reloads emotes when you switch channels.
 
-When two services have an emote with the same name, the channel's emote wins over a global one, and 7TV wins over BTTV, which wins over FFZ.
+If two emotes share a name, a channel emote is used over a global one, and 7TV is used over BTTV, which is used over FFZ.
 
-## Sending emotes
+To send an emote, type its name in chat. Anyone with EmoteKit, BTTV, FFZ or 7TV sees the image.
 
-You don't need anything special: type the emote name in chat and send it. Everyone using EmoteKit, BTTV, FFZ or 7TV sees the picture.
+## Network requests
 
-## Privacy
-
-EmoteKit only talks to:
-
-| Service | Why |
+| Host | Purpose |
 | --- | --- |
-| `gql.twitch.tv` | Turn the channel name into Twitch's numeric channel ID |
-| `api.ivr.fi` | Backup for the above if Twitch's lookup fails |
+| `gql.twitch.tv` | Look up the channel's Twitch user ID |
+| `api.ivr.fi` | Fallback for the lookup above |
 | `api.betterttv.net`, `api.frankerfacez.com`, `7tv.io` | Emote lists |
 
-It never reads your messages, account or login, and sends nothing anywhere else. Emote images load from each service's CDN.
+Emote images load from each service's CDN. The script does not read messages or account data.
 
 ## Troubleshooting
 
-- **No emotes at all:** check Safari → Settings → Extensions → Userscripts is allowed on `twitch.tv`, then reload the page.
-- **Some emotes missing:** open the Web Inspector console (Develop → Show Web Inspector) and look for lines starting with `[EmoteKit]`. It prints how many emotes loaded and which service failed, if any.
-- **More detail:** run `localStorage.setItem('emotekit:debug', '1')` in the console and reload.
-- **Running BTTV, FFZ or 7TV too?** Turn one off. Two tools replacing the same words can double up.
+- **No emotes:** check that Userscripts is allowed on `twitch.tv` (Safari → Settings → Extensions), then reload.
+- **Some emotes missing:** open the Web Inspector console (Develop → Show Web Inspector) and look for `[EmoteKit]` lines. They show how many emotes loaded and which service failed.
+- **Debug logging:** run `localStorage.setItem('emotekit:debug', '1')` in the console and reload.
+- **Duplicated emotes:** disable BTTV, FFZ or 7TV if you also run one of them.
 
 ## Known limitations
 
-- Zero-width emotes stack on BTTV, FFZ and 7TV emotes, but not on native Twitch emotes. Next to a Twitch emote they show side by side.
-- No emote picker or tab-completion yet. Typing names works.
-- Twitch changes its page layout from time to time. If emotes stop appearing after a Twitch update, please open an issue.
+- Zero-width emotes stack on BTTV, FFZ and 7TV emotes, not on native Twitch emotes.
+- BTTV text modifiers (`w!`, `h!`, ...) and FFZ effect emotes (`ffzW`, `ffzX`, ...) are not applied and stay as text.
+- No emote picker or tab-completion.
+- Changes to Twitch's page layout can stop emotes from appearing. Please open an issue if that happens.
 
-## Roadmap
+## Planned
 
-- Tab-completion for emote names in the chat box
+- Tab-completion for emote names
 - Emote picker
-- Settings panel to turn individual services on or off
-- Native Safari extension build (App Store)
+- Per-service on/off settings
+- Native Safari extension
 
 ## Development
 
@@ -69,11 +66,11 @@ npm install
 npm test
 ```
 
-The tests run the script in [jsdom](https://github.com/jsdom/jsdom) against mocked API responses: parsers, URL routing, chat rendering, zero-width stacking, failure handling, and the full start-up path.
+Tests run the script in [jsdom](https://github.com/jsdom/jsdom) against mocked API responses.
 
-## Not affiliated
+## Disclaimer
 
-EmoteKit is an independent project. It is not affiliated with or endorsed by Twitch, Apple, BetterTTV, FrankerFaceZ or 7TV. Emotes belong to their creators.
+Not affiliated with Twitch, Apple, BetterTTV, FrankerFaceZ or 7TV. Emotes belong to their creators.
 
 ## License
 

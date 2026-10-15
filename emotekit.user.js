@@ -2,7 +2,7 @@
 // @name         EmoteKit for Twitch
 // @namespace    https://github.com/zyknows/emotekit
 // @version      0.1.0
-// @description  Shows BetterTTV, FrankerFaceZ and 7TV emotes in Twitch chat. Built for Safari on Mac; works in any userscript manager.
+// @description  Shows BetterTTV, FrankerFaceZ and 7TV emotes in Twitch chat.
 // @author       Volkan
 // @license      MIT
 // @homepageURL  https://github.com/zyknows/emotekit
