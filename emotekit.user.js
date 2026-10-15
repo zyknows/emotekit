@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EmoteKit for Twitch
 // @namespace    https://github.com/zyknows/emotekit
-// @version      0.1.3
+// @version      0.2.0
 // @description  Shows BetterTTV, FrankerFaceZ and 7TV emotes in Twitch chat.
 // @author       Volkan
 // @license      MIT
@@ -287,6 +287,7 @@
     channelCache: new Map(), // twitch user id -> emote list
     routeKey: undefined,
     routeToken: 0,
+    mapVersion: 0, // bumped whenever the emote map changes, so the picker knows to rebuild
   };
 
   async function settledLists(jobs) {
@@ -359,6 +360,8 @@
     if (token !== state.routeToken) return; // user navigated away meanwhile
 
     state.map = buildMap([globals, channel]);
+    state.mapVersion++;
+    closePicker();
     console.info(TAG, `${state.map.size} emotes ready (${channel.length} from ${label})`);
     rescan();
   }
@@ -370,25 +373,32 @@
   // Live chat, popout chat and VOD chat replay all put plain message text in these spans.
   const FRAGMENT_SELECTOR = '[data-a-target="chat-message-text"], .text-fragment';
 
-  function makeEmote(e) {
+  // `deferred` leaves the image unloaded until loadImage() is called (used by the picker).
+  function makeEmote(e, deferred = false) {
     const wrap = document.createElement('span');
     wrap.className = 'emotekit-emote';
     wrap.dataset.emotekit = e.code;
-    wrap.appendChild(makeImg(e, false));
+    wrap.appendChild(makeImg(e, false, deferred));
     return wrap;
   }
 
-  function makeImg(e, overlay) {
+  function makeImg(e, overlay, deferred = false) {
     const img = document.createElement('img');
     img.className = overlay ? 'emotekit-img emotekit-overlay' : 'emotekit-img';
-    img.src = e.url1x;
-    if (e.url2x) img.srcset = `${e.url1x} 1x, ${e.url2x} 2x`;
+    img.dataset.src = e.url1x;
+    if (e.url2x) img.dataset.srcset = `${e.url1x} 1x, ${e.url2x} 2x`;
+    if (!deferred) loadImage(img);
     img.alt = e.code; // copying chat text keeps the emote name
     img.decoding = 'async';
     img.dataset.provider = e.provider; // read by the tooltip
     img.dataset.source = e.source;
     img.dataset.large = e.url2x || e.url1x;
     return img;
+  }
+
+  function loadImage(img) {
+    if (img.dataset.srcset) img.srcset = img.dataset.srcset;
+    img.src = img.dataset.src;
   }
 
   function attachOverlay(wrap, e) {
@@ -476,7 +486,7 @@
       .emotekit-emote > .emotekit-overlay { pointer-events: none; }
       .emotekit-tooltip {
         position: fixed;
-        z-index: 10000;
+        z-index: 2147483647;
         display: none;
         pointer-events: none;
         max-width: 260px;
@@ -500,6 +510,75 @@
         max-width: 240px;
       }
       .emotekit-tooltip-name { font-weight: 600; }
+      .emotekit-picker-slot { display: inline-block; }
+      .emotekit-picker-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        border: 0;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--color-fill-button-icon, #efeff1);
+        fill: currentColor;
+        cursor: pointer;
+      }
+      .emotekit-picker-button:hover,
+      .emotekit-picker-button[aria-expanded="true"] {
+        background: var(--color-background-button-text-hover, rgba(83, 83, 95, 0.48));
+      }
+      .emotekit-picker {
+        position: fixed;
+        z-index: 2147483646; /* above Twitch overlays; it closes on any click outside */
+        display: none;
+        flex-direction: column;
+        border: 1px solid var(--color-border-base, rgba(83, 83, 95, 0.48));
+        border-radius: 6px;
+        background: var(--color-background-float, #1f1f23);
+        color: var(--color-text-base, #efeff1);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+        font-size: 13px;
+        overflow: hidden;
+      }
+      .emotekit-picker-search {
+        margin: 8px;
+        padding: 6px 10px;
+        border: 1px solid var(--color-border-input, rgba(222, 222, 227, 0.4));
+        border-radius: 4px;
+        background: var(--color-background-input, #18181b);
+        color: inherit;
+        font: inherit;
+        outline: none;
+      }
+      .emotekit-picker-search:focus { border-color: var(--color-text-link, #a970ff); }
+      .emotekit-picker-list { overflow-y: auto; padding: 0 8px 8px; }
+      .emotekit-picker-section > h3 {
+        margin: 6px 2px 4px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--color-text-alt-2, #adadb8);
+      }
+      .emotekit-picker-grid { display: flex; flex-wrap: wrap; gap: 2px; }
+      .emotekit-picker-item {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 36px;
+        height: 36px;
+        padding: 2px 4px;
+        border: 0;
+        border-radius: 4px;
+        background: transparent;
+        cursor: pointer;
+      }
+      .emotekit-picker-item:hover { background: var(--color-background-interactable-hover, rgba(83, 83, 95, 0.48)); }
+      .emotekit-picker-item[hidden], .emotekit-picker-section[hidden], .emotekit-picker-empty[hidden] { display: none; }
+      .emotekit-picker-item .emotekit-emote { margin: 0; }
+      .emotekit-picker-item .emotekit-img { max-width: 112px; }
+      .emotekit-picker-empty { margin: 12px 4px; color: var(--color-text-alt-2, #adadb8); }
+      .emotekit-picker-name { font-size: 12px; color: var(--color-text-base, #efeff1); }
       .emotekit-tooltip-meta { color: #adadb8; font-size: 12px; }
     `;
     (document.head || document.documentElement).appendChild(style);
@@ -511,7 +590,7 @@
 
   // How long the tooltip stays up after the pointer leaves its emote, so it doesn't flicker
   // away in busy chat. Moving onto another emote still switches immediately.
-  const TOOLTIP_HIDE_DELAY = 300; // ms
+  const TOOLTIP_HIDE_DELAY = 200; // ms
 
   const tooltip = { el: null, target: null, hideTimer: null };
 
@@ -544,7 +623,7 @@
     const [base, ...overlays] = imgs;
     el.replaceChildren(
       preview,
-      line('emotekit-tooltip-name', base.alt),
+      line('emotekit-tooltip-name', wrap.dataset.emotekit),
       line('emotekit-tooltip-meta', `${base.dataset.provider} · ${base.dataset.source} emote`),
       ...overlays.map((o) => line('emotekit-tooltip-meta', `+ ${o.alt} · ${o.dataset.provider} ${o.dataset.source}`)),
     );
@@ -604,6 +683,329 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Chat input
+  // Twitch's chat box is a Slate editor. It ignores direct DOM edits, but it handles
+  // beforeinput events the same way as typing, so text is changed by sending those.
+  // ---------------------------------------------------------------------------
+
+  const CHAT_INPUT_SELECTOR = '[data-a-target="chat-input"]';
+
+  function sendInput(el, inputType, data = null) {
+    return !el.dispatchEvent(new InputEvent('beforeinput', {
+      inputType, data, bubbles: true, cancelable: true, composed: true,
+    }));
+  }
+
+  // Each deleteContentBackward removes one user-perceived character.
+  function charCount(text) {
+    if (typeof Intl !== 'undefined' && Intl.Segmenter) return [...new Intl.Segmenter().segment(text)].length;
+    return Array.from(text).length;
+  }
+
+  // Replaces the last `removed` text before the caret with `text`.
+  function replaceBeforeCaret(el, removed, text) {
+    for (let i = charCount(removed); i > 0; i--) sendInput(el, 'deleteContentBackward');
+    if (text) sendInput(el, 'insertText', text);
+  }
+
+  // Text between the start of the caret's text node and the caret, or null if the caret
+  // isn't a plain caret inside `el`. Slate pads empty lines with a zero-width character.
+  function textBeforeCaret(el) {
+    const sel = window.getSelection();
+    if (!sel || !sel.isCollapsed || !sel.anchorNode || !el.contains(sel.anchorNode)) return null;
+    const node = sel.anchorNode;
+    if (node.nodeType !== 3) return '';
+    return node.nodeValue.slice(0, sel.anchorOffset).replace(/﻿/g, '');
+  }
+
+  // Puts the caret at the end of the editor's text if it isn't already inside it.
+  function ensureCaret(el) {
+    const sel = window.getSelection();
+    if (document.activeElement === el && sel.anchorNode && el.contains(sel.anchorNode)) return false;
+    el.focus();
+    const leaves = el.querySelectorAll('[data-slate-string], [data-slate-zero-width]');
+    const last = leaves[leaves.length - 1];
+    const node = last && last.firstChild;
+    if (!node) return true;
+    const range = document.createRange();
+    range.setStart(node, last.hasAttribute('data-slate-zero-width') ? 0 : node.nodeValue.length);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    return true;
+  }
+
+  // Inserts an emote name at the caret, with a space before it if needed and one after it.
+  async function insertIntoChat(code) {
+    const el = document.querySelector(CHAT_INPUT_SELECTOR);
+    if (!el) return false;
+    // Slate picks up a moved caret on its next selectionchange, so give it a moment.
+    if (ensureCaret(el)) await new Promise((r) => setTimeout(r, 150));
+    const before = textBeforeCaret(el) || '';
+    const lead = before && !/\s$/.test(before) ? ' ' : '';
+    return sendInput(el, 'insertText', `${lead}${code} `);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tab completion: type the start of an emote name and press Tab. Tab again cycles
+  // forward through the matches, Shift+Tab backward.
+  // ---------------------------------------------------------------------------
+
+  const completion = { matches: null, index: 0, inserted: '' };
+
+  // Exact-case prefix matches first, then case-insensitive ones; shorter names first.
+  function findCompletions(prefix) {
+    const lower = prefix.toLowerCase();
+    const exact = [];
+    const loose = [];
+    for (const code of state.map.keys()) {
+      if (code.startsWith(prefix)) exact.push(code);
+      else if (code.toLowerCase().startsWith(lower)) loose.push(code);
+    }
+    const order = (a, b) => a.length - b.length || a.localeCompare(b);
+    return [...exact.sort(order), ...loose.sort(order)];
+  }
+
+  function onChatKeyDown(ev) {
+    if (ev.key !== 'Tab') {
+      if (ev.key !== 'Shift') completion.matches = null;
+      return;
+    }
+    if (ev.altKey || ev.ctrlKey || ev.metaKey || ev.isComposing) return;
+    const el = ev.target && ev.target.closest ? ev.target.closest(CHAT_INPUT_SELECTOR) : null;
+    if (!el) return;
+    const before = textBeforeCaret(el);
+    if (before === null) return;
+
+    let removed;
+    if (completion.matches && before.endsWith(completion.inserted)) {
+      const n = completion.matches.length;
+      completion.index = (completion.index + (ev.shiftKey ? n - 1 : 1)) % n;
+      removed = completion.inserted;
+    } else {
+      const prefix = before.match(/\S*$/)[0];
+      // @mentions and :emote search belong to Twitch's own autocomplete.
+      if (!prefix || /^[@:]/.test(prefix)) return;
+      const matches = findCompletions(prefix);
+      if (!matches.length) { completion.matches = null; return; }
+      completion.matches = matches;
+      completion.index = ev.shiftKey ? matches.length - 1 : 0;
+      removed = prefix;
+    }
+    // Without this, Tab moves focus out of the chat box.
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    const text = `${completion.matches[completion.index]} `;
+    replaceBeforeCaret(el, removed, text);
+    completion.inserted = text;
+  }
+
+  function installCompletion() {
+    window.addEventListener('keydown', onChatKeyDown, true); // before Twitch's own handlers
+  }
+
+  // ---------------------------------------------------------------------------
+  // Emote picker: a button next to Twitch's emote button opens a searchable list of
+  // every emote in the channel. Clicking one adds it to the message.
+  // ---------------------------------------------------------------------------
+
+  const picker = { button: null, panel: null, search: null, list: null, version: -1, observer: null };
+
+  const PICKER_GROUPS = [
+    ['Channel', '7TV'], ['Channel', 'BTTV'], ['Channel', 'FFZ'],
+    ['Global', '7TV'], ['Global', 'BTTV'], ['Global', 'FFZ'],
+  ];
+
+  function ensurePickerButton() {
+    if (picker.button && picker.button.isConnected) return;
+    const twitchButton = document.querySelector('[data-a-target="emote-picker-button"]');
+    const slot = twitchButton && twitchButton.parentElement;
+    if (!slot || !slot.parentElement) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'emotekit-picker-slot';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'emotekit-picker-button';
+    button.setAttribute('aria-label', 'EmoteKit emotes');
+    button.setAttribute('aria-expanded', 'false');
+    // Four-square grid: distinct from Twitch's smiley.
+    button.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" focusable="false">'
+      + '<rect x="2" y="2" width="7" height="7" rx="2"/><rect x="11" y="2" width="7" height="7" rx="2"/>'
+      + '<rect x="2" y="11" width="7" height="7" rx="2"/><rect x="11" y="11" width="7" height="7" rx="2"/></svg>';
+    button.addEventListener('click', () => (picker.panel && picker.panel.style.display === 'flex' ? closePicker() : openPicker()));
+    wrap.appendChild(button);
+    slot.parentElement.insertBefore(wrap, slot);
+    picker.button = button;
+  }
+
+  function buildPickerPanel() {
+    const panel = document.createElement('div');
+    panel.className = 'emotekit-picker';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', 'EmoteKit emotes');
+
+    const search = document.createElement('input');
+    search.type = 'text';
+    search.className = 'emotekit-picker-search';
+    search.placeholder = 'Search emotes';
+    search.setAttribute('aria-label', 'Search emotes');
+    search.autocomplete = 'off';
+    search.spellcheck = false;
+    search.addEventListener('input', () => filterPicker(search.value));
+    search.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+      } else if (ev.key === 'Escape') {
+        ev.preventDefault();
+        closePicker();
+      }
+    });
+    // Insert on keyup, not keydown: inserting moves focus to the chat box, and the rest of
+    // the Enter keypress would then land there and send the message.
+    search.addEventListener('keyup', (ev) => {
+      if (ev.key !== 'Enter' || ev.isComposing) return;
+      const first = [...picker.list.querySelectorAll('.emotekit-picker-item')].find((b) => !b.hidden);
+      if (first) insertIntoChat(first.dataset.code);
+    });
+
+    const list = document.createElement('div');
+    list.className = 'emotekit-picker-list';
+    // Keep focus (and the caret) in the chat box when clicking an emote.
+    list.addEventListener('mousedown', (ev) => { if (ev.target.closest('.emotekit-picker-item')) ev.preventDefault(); });
+    list.addEventListener('click', (ev) => {
+      const item = ev.target.closest('.emotekit-picker-item');
+      if (item) insertIntoChat(item.dataset.code);
+    });
+
+    panel.append(search, list);
+    document.body.appendChild(panel);
+    picker.panel = panel;
+    picker.search = search;
+    picker.list = list;
+  }
+
+  function fillPicker() {
+    const groups = new Map(PICKER_GROUPS.map(([source, provider]) => [`${source} · ${provider}`, []]));
+    for (const e of state.map.values()) {
+      const g = groups.get(`${e.source} · ${e.provider}`);
+      if (g) g.push(e);
+    }
+    const sections = [];
+    for (const [title, emotes] of groups) {
+      if (!emotes.length) continue;
+      emotes.sort((a, b) => a.code.localeCompare(b.code, undefined, { sensitivity: 'base' }));
+      const section = document.createElement('section');
+      section.className = 'emotekit-picker-section';
+      const h = document.createElement('h3');
+      h.dataset.title = title;
+      h.textContent = `${title} (${emotes.length})`;
+      const grid = document.createElement('div');
+      grid.className = 'emotekit-picker-grid';
+      for (const e of emotes) {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'emotekit-picker-item';
+        item.dataset.code = e.code;
+        item.setAttribute('aria-label', e.code);
+        const emote = makeEmote(e, true);
+        const img = emote.querySelector('img');
+        img.alt = ''; // the button carries the name
+        // If the image fails, show the name instead of a broken-image icon.
+        img.addEventListener('error', () => {
+          emote.replaceWith(Object.assign(document.createElement('span'), { className: 'emotekit-picker-name', textContent: e.code }));
+        }, { once: true });
+        item.appendChild(emote);
+        grid.appendChild(item);
+      }
+      section.append(h, grid);
+      sections.push(section);
+    }
+    const empty = document.createElement('p');
+    empty.className = 'emotekit-picker-empty';
+    empty.textContent = state.map.size ? 'No emotes match.' : 'Emotes are still loading.';
+    empty.hidden = sections.length > 0;
+    picker.list.replaceChildren(...sections, empty);
+    picker.version = state.mapVersion;
+    observePickerImages();
+  }
+
+  // Big channels have 1000+ emotes, many of them large animations. Load only what is on
+  // screen or about to scroll in, so the visible ones aren't stuck behind the rest.
+  function observePickerImages() {
+    const imgs = picker.list.querySelectorAll('.emotekit-picker-item img');
+    if (typeof IntersectionObserver === 'undefined') { imgs.forEach(loadImage); return; }
+    if (picker.observer) picker.observer.disconnect();
+    picker.observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        loadImage(entry.target);
+        picker.observer.unobserve(entry.target);
+      }
+    }, { root: picker.list, rootMargin: '120px 0px' });
+    imgs.forEach((img) => picker.observer.observe(img));
+  }
+
+  function filterPicker(query) {
+    const q = query.trim().toLowerCase();
+    let any = false;
+    for (const section of picker.list.querySelectorAll('.emotekit-picker-section')) {
+      let shown = 0;
+      for (const item of section.querySelectorAll('.emotekit-picker-item')) {
+        item.hidden = q !== '' && !item.dataset.code.toLowerCase().includes(q);
+        if (!item.hidden) shown++;
+      }
+      section.hidden = shown === 0;
+      const h = section.querySelector('h3');
+      h.textContent = `${h.dataset.title} (${shown})`;
+      if (shown) any = true;
+    }
+    picker.list.querySelector('.emotekit-picker-empty').hidden = any;
+  }
+
+  function positionPicker() {
+    const anchor = picker.button.closest('.chat-input__textarea') || picker.button;
+    const r = anchor.getBoundingClientRect();
+    const width = Math.min(340, window.innerWidth - 16);
+    const left = Math.max(8, Math.min(r.right - width, window.innerWidth - width - 8));
+    picker.panel.style.width = `${width}px`;
+    picker.panel.style.left = `${Math.round(left)}px`;
+    picker.panel.style.bottom = `${Math.round(window.innerHeight - r.top + 6)}px`;
+    picker.panel.style.maxHeight = `${Math.max(200, Math.min(420, r.top - 16))}px`;
+  }
+
+  function openPicker() {
+    if (!picker.button) return;
+    if (!picker.panel || !picker.panel.isConnected) buildPickerPanel();
+    if (picker.version !== state.mapVersion || !state.map.size) fillPicker();
+    picker.search.value = '';
+    filterPicker('');
+    picker.panel.style.display = 'flex';
+    positionPicker();
+    picker.list.scrollTop = 0;
+    picker.button.setAttribute('aria-expanded', 'true');
+    picker.search.focus();
+  }
+
+  function closePicker() {
+    if (!picker.panel || picker.panel.style.display !== 'flex') return;
+    picker.panel.style.display = 'none';
+    if (picker.button) picker.button.setAttribute('aria-expanded', 'false');
+    hideTooltip();
+  }
+
+  function installPicker() {
+    ensurePickerButton();
+    // Close on a click outside the picker and its button, or on Escape anywhere.
+    document.addEventListener('mousedown', (ev) => {
+      if (!picker.panel || picker.panel.style.display !== 'flex') return;
+      if (picker.panel.contains(ev.target) || (picker.button && picker.button.contains(ev.target))) return;
+      closePicker();
+    }, true);
+    document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closePicker(); });
+    window.addEventListener('resize', closePicker);
+  }
+
+  // ---------------------------------------------------------------------------
   // Boot
   // ---------------------------------------------------------------------------
 
@@ -611,6 +1013,8 @@
     parseBttv, parseBttvChannel, parseFfzGlobal, parseFfzRoom, parse7tvGlobal, parse7tvUser,
     buildMap, channelFromPath, processFragment, processTree, onMutations, rescan, state,
     installTooltip, tooltip,
+    installCompletion, findCompletions, completion, insertIntoChat,
+    installPicker, ensurePickerButton, openPicker, closePicker, filterPicker, picker,
   };
 
   // Test hook: tests set this object before loading the script.
@@ -623,12 +1027,14 @@
     if (document.getElementById('emotekit-style')) return; // already running
     injectStyle();
     installTooltip();
+    installCompletion();
+    installPicker();
     new MutationObserver(onMutations).observe(document.documentElement, {
       childList: true, subtree: true, characterData: true,
     });
     handleRoute();
     // Twitch is a single-page app; poll the URL to catch channel switches.
-    setInterval(handleRoute, 1000);
+    setInterval(() => { handleRoute(); ensurePickerButton(); }, 1000); // Twitch re-renders the chat box at times
     window.addEventListener('popstate', handleRoute);
   }
 

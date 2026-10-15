@@ -23,11 +23,13 @@ It is a single file with no dependencies. It also works in Chrome and Firefox wi
 - Uses 2x images on high-DPI screens.
 - Hovering an emote immediately shows a larger preview, its name and service, and any zero-width emotes on it.
 - Copied chat text keeps the emote names.
+- **Tab completion:** type the start of an emote name in the chat box and press Tab. Press Tab again for the next match, Shift+Tab for the previous one. Matching ignores case.
+- **Emote picker:** the grid button next to Twitch's emote button lists the channel's and global emotes by service, with a search box. Click an emote, or press Enter in the search box, to add it to your message.
 - Reloads emotes when you switch channels.
 
 If two emotes share a name, a channel emote is used over a global one, and 7TV is used over BTTV, which is used over FFZ.
 
-To send an emote, type its name in chat. Anyone with EmoteKit, BTTV, FFZ or 7TV sees the image.
+Anyone with EmoteKit, BTTV, FFZ or 7TV sees the emotes you send.
 
 ## Network requests
 
@@ -50,13 +52,10 @@ Emote images load from each service's CDN. The script does not read messages or 
 
 - Zero-width emotes stack on BTTV, FFZ and 7TV emotes, not on native Twitch emotes.
 - BTTV text modifiers (`w!`, `h!`, ...) and FFZ effect emotes (`ffzW`, `ffzX`, ...) are not applied and stay as text.
-- No emote picker or tab-completion.
 - Changes to Twitch's page layout can stop emotes from appearing. Please open an issue if that happens.
 
 ## Planned
 
-- Tab-completion for emote names
-- Emote picker
 - Per-service on/off settings
 - Native Safari extension
 

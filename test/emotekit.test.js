@@ -212,10 +212,10 @@ function loadInternals() {
     assert.strictEqual(tip.style.display, 'block', 'stays up briefly after the pointer moves off');
     await wait(150);
     over(wrap);
-    await wait(250);
+    await wait(150);
     assert.strictEqual(tip.style.display, 'block', 'coming back before the delay ends keeps it up');
     over(el);
-    await wait(350);
+    await wait(260);
     assert.strictEqual(tip.style.display, 'none', 'hidden once the delay has passed');
 
     const other = msg('KEKW');
@@ -223,7 +223,7 @@ function loadInternals() {
     over(wrap);
     over(other.querySelector('.emotekit-emote'));
     assert.strictEqual(tip.querySelector('.emotekit-tooltip-name').textContent, 'KEKW', 'switches to another emote immediately');
-    await wait(350);
+    await wait(260);
     assert.strictEqual(tip.style.display, 'block', 'no pending hide carried over from the switch');
 
     over(wrap);
@@ -231,12 +231,12 @@ function loadInternals() {
     const realMatches = wrap.matches;
     wrap.matches = (sel) => (sel === ':hover' ? underPointer : realMatches.call(wrap, sel));
     doc.dispatchEvent(new dom.window.Event('scroll'));
-    await wait(350);
+    await wait(260);
     assert.strictEqual(tip.style.display, 'block', 'stays up on scroll while the emote is still under the pointer');
     underPointer = false;
     doc.dispatchEvent(new dom.window.Event('scroll'));
     assert.strictEqual(tip.style.display, 'block', 'still up right after the emote scrolls away');
-    await wait(350);
+    await wait(260);
     assert.strictEqual(tip.style.display, 'none', 'hidden once the delay has passed after scrolling away');
   });
 
@@ -278,6 +278,164 @@ function loadInternals() {
     doc.body.appendChild(line);
     k.rescan();
     assert.strictEqual(line.querySelectorAll('.emotekit-emote').length, 0);
+  });
+
+  // Stand-in for Twitch's Slate chat box: it only changes its text through beforeinput
+  // events (like Slate) and re-renders with the caret at the end.
+  const fakeChatInput = () => {
+    const box = doc.createElement('div');
+    box.className = 'chat-input__textarea';
+    box.innerHTML = '<div class="row"><div class="slot"><button data-a-target="emote-picker-button">:)</button></div></div>';
+    const el = doc.createElement('div');
+    el.setAttribute('data-a-target', 'chat-input');
+    el.setAttribute('contenteditable', 'true');
+    el.tabIndex = 0;
+    box.prepend(el);
+    doc.body.appendChild(box);
+    const ed = { el, box, value: '' };
+    const render = () => {
+      const leaf = doc.createElement('span');
+      if (ed.value) { leaf.setAttribute('data-slate-string', 'true'); leaf.textContent = ed.value; } else { leaf.setAttribute('data-slate-zero-width', 'n'); leaf.textContent = '﻿'; }
+      el.replaceChildren(leaf);
+      if (doc.activeElement !== el) return;
+      const r = doc.createRange();
+      r.setStart(leaf.firstChild, ed.value ? ed.value.length : 0);
+      const sel = dom.window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    };
+    el.addEventListener('beforeinput', (e) => {
+      e.preventDefault();
+      if (e.inputType === 'insertText') ed.value += e.data;
+      else if (e.inputType === 'deleteContentBackward') ed.value = [...ed.value].slice(0, -1).join('');
+      render();
+    });
+    ed.type = (text) => { el.focus(); ed.value += text; render(); };
+    ed.tab = (shiftKey = false) => {
+      const ev = new dom.window.KeyboardEvent('keydown', { key: 'Tab', shiftKey, bubbles: true, cancelable: true });
+      el.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    };
+    ed.remove = () => box.remove();
+    render();
+    return ed;
+  };
+
+  const extra = ['peepoSad', 'PepePls', 'pepeLaugh'];
+  const withExtraEmotes = (fn) => async () => {
+    for (const code of extra) k.state.map.set(code, { code, provider: '7TV', source: 'Global', url1x: `https://x/${code}/1x.webp`, url2x: null, zeroWidth: false });
+    try { await fn(); } finally { for (const code of extra) k.state.map.delete(code); }
+  };
+
+  await test('tab completion: match order', withExtraEmotes(() => {
+    assert.deepStrictEqual(A(k.findCompletions('pe')), ['pepeD', 'peepoSad', 'pepeLaugh', 'PepePls'], 'exact case first, then shorter');
+    assert.deepStrictEqual(A(k.findCompletions('PEPE')), ['pepeD', 'PepePls', 'pepeLaugh'], 'case-insensitive fallback');
+    assert.deepStrictEqual(A(k.findCompletions('zzz')), []);
+  }));
+
+  await test('tab completion: completes, cycles both ways, adds a space', withExtraEmotes(() => {
+    k.installCompletion();
+    const ed = fakeChatInput();
+    ed.type('hi pe');
+    assert.strictEqual(ed.tab(), true, 'Tab is taken over so focus stays in chat');
+    assert.strictEqual(ed.value, 'hi pepeD ');
+    ed.tab();
+    assert.strictEqual(ed.value, 'hi peepoSad ');
+    ed.tab(); ed.tab();
+    assert.strictEqual(ed.value, 'hi PepePls ');
+    ed.tab();
+    assert.strictEqual(ed.value, 'hi pepeD ', 'wraps around');
+    ed.tab(true);
+    assert.strictEqual(ed.value, 'hi PepePls ', 'Shift+Tab goes back');
+    ed.el.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'x', bubbles: true }));
+    ed.type('x');
+    assert.strictEqual(ed.tab(), false, 'typing ends the cycle; nothing to complete after "x"');
+    assert.strictEqual(ed.value, 'hi PepePls x');
+    ed.remove();
+  }));
+
+  await test('tab completion: leaves Tab alone when there is nothing to complete', () => {
+    const ed = fakeChatInput();
+    ed.type('hello zzzq');
+    assert.strictEqual(ed.tab(), false);
+    assert.strictEqual(ed.value, 'hello zzzq');
+    ed.type(' @Kek');
+    assert.strictEqual(ed.tab(), false, '@mentions are left to Twitch');
+    ed.type(' :Kek');
+    assert.strictEqual(ed.tab(), false, ':emote search is left to Twitch');
+    ed.type(' ');
+    assert.strictEqual(ed.tab(), false, 'no word before the caret');
+    ed.remove();
+  });
+
+  await test('emote picker: button, grouped list, search, insert, close', async () => {
+    const ed = fakeChatInput();
+    k.installPicker();
+    const button = doc.querySelector('.emotekit-picker-button');
+    assert.ok(button, 'button added');
+    assert.strictEqual(button.parentElement.nextElementSibling, doc.querySelector('[data-a-target="emote-picker-button"]').parentElement, 'next to Twitch\'s emote button');
+    k.ensurePickerButton();
+    assert.strictEqual(doc.querySelectorAll('.emotekit-picker-button').length, 1, 'added only once');
+
+    button.click();
+    const panel = doc.querySelector('.emotekit-picker');
+    assert.strictEqual(panel.style.display, 'flex');
+    assert.strictEqual(button.getAttribute('aria-expanded'), 'true');
+    const headings = [...panel.querySelectorAll('h3')].map((h) => h.textContent);
+    assert.deepStrictEqual(headings, ['Channel · 7TV (2)', 'Channel · BTTV (1)', 'Channel · FFZ (1)', 'Global · 7TV (1)', 'Global · BTTV (2)', 'Global · FFZ (2)']);
+    const codes = () => [...panel.querySelectorAll('.emotekit-picker-item')].filter((i) => !i.hidden).map((i) => i.dataset.code);
+    assert.ok(codes().includes('pepeD') && codes().filter((c) => c === 'pepeD').length === 1, 'shadowed duplicates appear once');
+
+    const search = panel.querySelector('.emotekit-picker-search');
+    search.value = 'cl';
+    search.dispatchEvent(new dom.window.Event('input'));
+    assert.deepStrictEqual(codes(), ['Clap']);
+    assert.strictEqual([...panel.querySelectorAll('.emotekit-picker-section:not([hidden]) h3')].map((h) => h.textContent).join(), 'Channel · 7TV (1)', 'heading shows the match count');
+    assert.strictEqual([...panel.querySelectorAll('.emotekit-picker-section')].filter((x) => !x.hidden).length, 1, 'empty sections hidden');
+    search.value = 'nothing-like-this';
+    search.dispatchEvent(new dom.window.Event('input'));
+    assert.strictEqual(panel.querySelector('.emotekit-picker-empty').hidden, false, 'empty message');
+
+    // An emote whose image fails shows its name instead, and still works.
+    const kekwImg = panel.querySelector('[data-code="KEKW"] img');
+    assert.strictEqual(kekwImg.alt, '', 'no alt text inside the picker');
+    kekwImg.dispatchEvent(new dom.window.Event('error'));
+    assert.strictEqual(panel.querySelector('[data-code="KEKW"]').textContent, 'KEKW', 'name shown when the image fails');
+
+    // Click inserts at the caret, with spaces as needed.
+    ed.type('nice');
+    panel.querySelector('[data-code="KEKW"]').click();
+    await new Promise((r) => setTimeout(r, 0));
+    assert.strictEqual(ed.value, 'nice KEKW ');
+    panel.querySelector('[data-code="Clap"]').click();
+    await new Promise((r) => setTimeout(r, 0));
+    assert.strictEqual(ed.value, 'nice KEKW Clap ');
+
+    // Enter in the search box inserts the first match, after moving the caret into the chat box.
+    search.focus();
+    search.value = 'lilz';
+    search.dispatchEvent(new dom.window.Event('input'));
+    const enterDown = new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    search.dispatchEvent(enterDown);
+    assert.ok(enterDown.defaultPrevented);
+    assert.strictEqual(doc.activeElement, search, 'focus stays in search until Enter is released, so the keypress cannot send the message');
+    assert.strictEqual(ed.value, 'nice KEKW Clap ');
+    search.dispatchEvent(new dom.window.KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
+    await new Promise((r) => setTimeout(r, 200));
+    assert.strictEqual(ed.value, 'nice KEKW Clap LilZ ');
+
+    doc.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    assert.strictEqual(panel.style.display, 'none', 'Escape closes');
+    button.click();
+    assert.strictEqual(panel.style.display, 'flex');
+    doc.body.dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
+    assert.strictEqual(panel.style.display, 'none', 'click outside closes');
+    assert.strictEqual(button.getAttribute('aria-expanded'), 'false');
+
+    // Twitch re-renders the chat box: the button comes back.
+    ed.remove();
+    const ed2 = fakeChatInput();
+    k.ensurePickerButton();
+    assert.ok(ed2.box.querySelector('.emotekit-picker-button'), 're-added after re-render');
+    ed2.remove();
   });
 
   await test('perf: 500 messages x 20 words', () => {
