@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EmoteKit for Twitch
 // @namespace    https://github.com/zyknows/emotekit
-// @version      0.3.0
+// @version      0.3.1
 // @description  Shows BetterTTV, FrankerFaceZ and 7TV emotes in Twitch chat.
 // @author       Volkan
 // @license      MIT
@@ -497,7 +497,14 @@
     if (on === isFavourite(key)) return;
     favourites = on ? [...favourites, key] : favourites.filter((k) => k !== key);
     store.set('favourites', favourites);
-    if (pickerIsOpen() && !picker.hideMode) renderPicker({ keepScroll: true });
+    if (pickerIsOpen() && !picker.hideMode) {
+      // Favourites sit at the top. Scroll by however much that section grew or shrank, so
+      // the emotes under the pointer stay put while starring several in a row.
+      const top = () => (picker.list.firstElementChild ? picker.list.firstElementChild.getBoundingClientRect().height : 0);
+      const before = top();
+      renderPicker({ keepScroll: true });
+      picker.list.scrollTop += top() - before;
+    }
   }
 
   function installStorageSync() {
@@ -829,6 +836,30 @@
         transform: rotate(-30deg);
       }
       .emotekit-hide-mode .emotekit-picker-item:not(.emotekit-is-hidden):hover .emotekit-emote { opacity: 0.6; }
+      .emotekit-picker-star {
+        position: absolute;
+        top: -2px;
+        right: -2px;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        width: 15px;
+        height: 15px;
+        border-radius: 50%;
+        background: var(--color-background-float, #1f1f23);
+        box-shadow: 0 0 0 1px var(--color-border-base, rgba(83, 83, 95, 0.48));
+        color: var(--color-text-alt-2, #adadb8);
+        font-size: 11px;
+        line-height: 1;
+      }
+      .emotekit-picker-item:hover .emotekit-picker-star,
+      .emotekit-picker-item.emotekit-is-favourite .emotekit-picker-star { display: flex; }
+      .emotekit-picker-item.emotekit-is-favourite .emotekit-picker-star,
+      .emotekit-picker-star:hover { color: #f5c400; }
+      .emotekit-picker-star:hover { transform: scale(1.2); }
+      .emotekit-hide-mode .emotekit-picker-item .emotekit-picker-star { display: none; }
+      /* In Favourites every emote is one, so the star only shows on hover there. */
+      .emotekit-picker-favourites .emotekit-picker-item:not(:hover) .emotekit-picker-star { display: none; }
       .emotekit-picker-list { overflow-y: auto; padding: 0 8px 8px; }
       .emotekit-picker-section > h3 {
         margin: 6px 2px 4px;
@@ -836,7 +867,7 @@
         font-weight: 600;
         color: var(--color-text-alt-2, #adadb8);
       }
-      .emotekit-picker-grid { display: flex; flex-wrap: wrap; gap: 2px; }
+      .emotekit-picker-grid { display: flex; flex-wrap: wrap; gap: 2px; padding-top: 3px; }
       /* Let the browser skip layout for sections that are scrolled out of view. */
       .emotekit-picker-section { content-visibility: auto; contain-intrinsic-size: auto 240px; }
       .emotekit-picker-item {
@@ -1307,7 +1338,9 @@
     list.addEventListener('mousedown', (ev) => { if (ev.target.closest('button')) ev.preventDefault(); });
     list.addEventListener('click', (ev) => {
       const item = ev.target.closest('.emotekit-picker-item');
-      if (item) onItemClick(item);
+      if (item && !picker.hideMode && ev.target.closest('.emotekit-picker-star')) {
+        setFavourite(item.dataset.key, !isFavourite(item.dataset.key));
+      } else if (item) onItemClick(item);
       else if (ev.target.closest('.emotekit-picker-manage')) setHideMode(true);
     });
 
@@ -1341,9 +1374,11 @@
     item.type = 'button';
     item.className = 'emotekit-picker-item emotekit-loading'; // grey placeholder until the image arrives
     if (hidden.has(e.key)) item.classList.add('emotekit-is-hidden');
+    const starred = isFavourite(e.key);
+    if (starred) item.classList.add('emotekit-is-favourite');
     item.dataset.key = e.key;
     item.dataset.code = e.code;
-    item.setAttribute('aria-label', e.code);
+    item.setAttribute('aria-label', starred ? `${e.code}, favourite` : e.code);
     const emote = makeEmote(e, true);
     const img = emote.querySelector('img');
     img.alt = ''; // the button carries the name
@@ -1354,12 +1389,18 @@
       emote.replaceWith(Object.assign(document.createElement('span'), { className: 'emotekit-picker-name', textContent: e.code }));
     }, { once: true });
     item.appendChild(emote);
+    // Star in the corner: shown on hover, and always on favourites. Click it to toggle.
+    const star = document.createElement('span');
+    star.className = 'emotekit-picker-star';
+    star.textContent = starred ? '★' : '☆';
+    star.setAttribute('aria-hidden', 'true');
+    item.appendChild(star);
     return item;
   }
 
-  function pickerSection(title, emotes, count = emotes.length) {
+  function pickerSection(title, emotes, count = emotes.length, extraClass = '') {
     const section = document.createElement('section');
-    section.className = 'emotekit-picker-section';
+    section.className = `emotekit-picker-section ${extraClass}`.trim();
     const h = document.createElement('h3');
     h.textContent = `${title} (${count})`;
     const grid = document.createElement('div');
@@ -1400,7 +1441,7 @@
         parts.push(off.length ? pickerSection('Hidden', off) : pickerNote('No hidden emotes in this channel yet.'));
       } else {
         const starred = favourites.map((k) => state.all.get(k)).filter((e) => e && state.map.get(e.code) === e);
-        parts.push(starred.length ? pickerSection('Favourites', starred)
+        parts.push(starred.length ? pickerSection('Favourites', starred, starred.length, 'emotekit-picker-favourites')
           : pickerNote('Click an emote in chat to add it to your favourites.', 'emotekit-picker-hint'));
       }
       const popular = emotes.filter((e) => score(e) >= 0.5).sort((a, b) => score(b) - score(a) || byName(a, b)).slice(0, POPULAR_SHOWN);
@@ -1427,7 +1468,11 @@
   // they're built once per emote list and mode, and reused on reopen and after a search.
   function groupSections(emotes) {
     const key = `${state.mapVersion}:${picker.hideMode}`;
-    if (picker.groups.key === key) return picker.groups.nodes;
+    if (picker.groups.key === key) {
+      if (picker.groups.favourites !== favourites) syncFavouriteItems(picker.groups.nodes);
+      picker.groups.favourites = favourites;
+      return picker.groups.nodes;
+    }
     const groups = new Map(PICKER_GROUPS.map(([source, provider]) => [`${source} · ${provider}`, []]));
     for (const e of emotes) {
       const g = groups.get(`${e.source} · ${e.provider}`);
@@ -1435,8 +1480,21 @@
     }
     const nodes = [];
     for (const [title, list] of groups) if (list.length) nodes.push(pickerSection(title, list.sort(byName)));
-    picker.groups = { key, nodes };
+    picker.groups = { key, nodes, favourites };
     return nodes;
+  }
+
+  // Favourites changed since these sections were built: update their stars.
+  function syncFavouriteItems(nodes) {
+    for (const node of nodes) {
+      for (const item of node.querySelectorAll('.emotekit-picker-item')) {
+        const on = isFavourite(item.dataset.key);
+        if (on === item.classList.contains('emotekit-is-favourite')) continue;
+        item.classList.toggle('emotekit-is-favourite', on);
+        item.querySelector('.emotekit-picker-star').textContent = on ? '★' : '☆';
+        item.setAttribute('aria-label', on ? `${item.dataset.code}, favourite` : item.dataset.code);
+      }
+    }
   }
 
   // In hide mode, toggling an emote just dims or undims it in place, so nothing jumps.

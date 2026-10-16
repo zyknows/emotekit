@@ -414,7 +414,7 @@ function loadInternals() {
     const kekwImg = panel.querySelector('[data-code="KEKW"] img');
     assert.strictEqual(kekwImg.alt, '', 'no alt text inside the picker');
     kekwImg.dispatchEvent(new dom.window.Event('error'));
-    assert.strictEqual(panel.querySelector('[data-code="KEKW"]').textContent, 'KEKW', 'name shown when the image fails');
+    assert.strictEqual(panel.querySelector('[data-code="KEKW"] .emotekit-picker-name').textContent, 'KEKW', 'name shown when the image fails');
 
     // Click inserts at the caret, with spaces as needed.
     ed.type('nice');
@@ -550,6 +550,48 @@ function loadInternals() {
     k.setFavourite('FFZ:1', false);
     k.setFavourite('7TV:s1', false);
     assert.deepStrictEqual(A(k.getFavourites()), []);
+    ed.remove();
+  });
+
+  await test('favourites: the star on a picker emote toggles it without inserting', async () => {
+    k.loadUsage('chan-star');
+    k.processFragment(msg('OMEGALUL'));
+    const ed = fakeChatInput();
+    ed.type('hi');
+    k.ensurePickerButton();
+    k.openPicker();
+    const panel = doc.querySelector('.emotekit-picker');
+    const popularItem = () => [...panel.querySelectorAll('.emotekit-picker-section')]
+      .find((x) => x.querySelector('h3').textContent.startsWith('Popular')).querySelector('[data-code="OMEGALUL"]');
+    const star = popularItem().querySelector('.emotekit-picker-star');
+    assert.strictEqual(star.textContent, '☆');
+    star.click();
+    await tick();
+    assert.ok(k.isFavourite('BTTV:b1'), 'favourited from Popular here');
+    assert.strictEqual(ed.value, 'hi', 'clicking the star does not insert the emote');
+    assert.deepStrictEqual(sectionCodes(panel, 'Favourites'), ['OMEGALUL'], 'shows up in Favourites right away');
+    assert.ok(popularItem().classList.contains('emotekit-is-favourite'), 'marked in Popular here too');
+    const groupItem = () => [...panel.querySelectorAll('.emotekit-picker-section')]
+      .find((x) => x.querySelector('h3').textContent.startsWith('Global · BTTV')).querySelector('[data-code="OMEGALUL"]');
+    assert.ok(groupItem().classList.contains('emotekit-is-favourite'), 'marked in its service section too (reused between renders)');
+    assert.strictEqual(popularItem().querySelector('.emotekit-picker-star').textContent, '★');
+    assert.strictEqual(popularItem().getAttribute('aria-label'), 'OMEGALUL, favourite');
+    // Clicking the emote itself still inserts it.
+    popularItem().click();
+    await tick(200); // focus was in the search box, so the caret moves to chat first
+    assert.strictEqual(ed.value, 'hi OMEGALUL ');
+    // Unstar from the Favourites section.
+    panel.querySelector('.emotekit-picker-section [data-code="OMEGALUL"] .emotekit-picker-star').click();
+    assert.ok(!k.isFavourite('BTTV:b1'));
+    assert.strictEqual(sectionCodes(panel, 'Favourites'), null, 'gone from Favourites');
+    assert.ok(!groupItem().classList.contains('emotekit-is-favourite'), 'unmarked in its service section');
+    // In hide mode a click (even on the star's spot) hides, it doesn't favourite.
+    panel.querySelector('.emotekit-picker-hide-toggle').click();
+    panel.querySelector('[data-code="OMEGALUL"] .emotekit-picker-star').click();
+    assert.ok(!k.isFavourite('BTTV:b1') && k.hidden.has('BTTV:b1'));
+    k.setHidden('BTTV:b1', false);
+    k.closePicker();
+    k.loadUsage(null);
     ed.remove();
   });
 
