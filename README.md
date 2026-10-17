@@ -1,6 +1,6 @@
 # EmoteKit for Twitch
 
-A userscript that adds BetterTTV, FrankerFaceZ and 7TV emotes to Twitch chat, with tools to find, send, favourite and hide them, and settings for how chat looks.
+A userscript that adds BetterTTV, FrankerFaceZ and 7TV emotes to Twitch chat and shows at a glance which emotes each channel uses most, with tools to find, send, favourite and hide emotes, and settings for how chat looks.
 
 - **No account, no tracking.** Nothing about what you watch or type leaves your browser. Favourites, hidden emotes, settings and usage counts are stored locally.
 - **No dependencies.** One file. It contacts only Twitch and the three emote services.
