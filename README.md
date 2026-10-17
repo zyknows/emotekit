@@ -3,8 +3,8 @@
 A userscript that adds BetterTTV, FrankerFaceZ and 7TV emotes to Twitch chat and shows at a glance which emotes each channel uses most, with tools to find, send, favourite and hide emotes, and settings for how chat looks.
 
 <p>
-  <img src="docs/picker.png" width="340" alt="The emote picker: favourites, then the emotes this channel's chat uses most">
-  <img src="docs/settings.png" width="340" alt="The settings panel">
+  <img src="docs/picker.png" height="460" alt="The emote picker: favourites, then the emotes this channel's chat uses most">
+  <img src="docs/settings.png" height="460" alt="The settings panel">
 </p>
 
 - **No account, no tracking.** Nothing about what you watch or type leaves your browser. Favourites, hidden emotes, settings and usage counts are stored locally.
