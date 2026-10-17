@@ -42,8 +42,8 @@ const MOCK = {
   },
   'https://7tv.io/v3/users/twitch/123': {
     emote_set: { emotes: [
-      { id: 's2', name: 'Clap', flags: 0, data: { flags: 0, animated: true, host: { url: '//cdn.7tv.app/emote/s2', files: [{ name: '1x.webp', static_name: '1x_static.webp' }, { name: '2x.webp', static_name: '2x_static.webp' }] } } },
-      { id: 's3', name: 'pepeD', flags: 0, data: { flags: 0, host: { url: '//cdn.7tv.app/emote/s3', files: [{ name: '1x.webp' }] } } },
+      { id: 's2', name: 'Clap', flags: 0, timestamp: Date.now() - 2 * 864e5, data: { flags: 0, animated: true, host: { url: '//cdn.7tv.app/emote/s2', files: [{ name: '1x.webp', static_name: '1x_static.webp' }, { name: '2x.webp', static_name: '2x_static.webp' }] } } },
+      { id: 's3', name: 'pepeD', flags: 0, timestamp: Date.now() - 40 * 864e5, data: { flags: 0, host: { url: '//cdn.7tv.app/emote/s3', files: [{ name: '1x.webp' }] } } },
     ] },
   },
 };
@@ -403,7 +403,7 @@ function loadInternals() {
     const panel = doc.querySelector('.emotekit-picker');
     assert.strictEqual(panel.style.display, 'flex');
     assert.strictEqual(button.getAttribute('aria-expanded'), 'true');
-    assert.deepStrictEqual(headings(panel), ['Channel · 7TV (2)', 'Channel · BTTV (1)', 'Channel · FFZ (1)', 'Global · 7TV (1)', 'Global · BTTV (2)', 'Global · FFZ (2)']);
+    assert.deepStrictEqual(headings(panel), ['New in this channel (1)', 'Channel · 7TV (2)', 'Channel · BTTV (1)', 'Channel · FFZ (1)', 'Global · 7TV (1)', 'Global · BTTV (2)', 'Global · FFZ (2)']);
     assert.ok(panel.querySelector('.emotekit-picker-hint'), 'hints shown while there are no favourites or stats');
     assert.strictEqual(itemCodes(panel).filter((c) => c === 'pepeD').length, 1, 'shadowed duplicates appear once');
     const clapItem = panel.querySelector('[data-code="Clap"]');
@@ -883,14 +883,14 @@ function loadInternals() {
     assert.ok(view && !view.hidden, 'settings shown');
     assert.ok(panel.querySelector('.emotekit-picker-list').hidden, 'emote list hidden meanwhile');
     assert.strictEqual(gear.getAttribute('aria-pressed'), 'true');
-    assert.deepStrictEqual([...view.querySelectorAll('h3')].map((h) => h.textContent), ['Animated emotes', 'Emote size in chat', 'Services', 'Busy chat']);
+    assert.deepStrictEqual([...view.querySelectorAll('h3')].map((h) => h.textContent), ['Animated emotes', 'Emote size in chat', 'Services', 'Busy chat', 'Chat box']);
     const checked = () => [...view.querySelectorAll('[aria-checked="true"]')].map((b) => b.dataset.value);
     assert.deepStrictEqual(checked(), ['auto', 'normal']);
     view.querySelector('[data-value="never"]').click();
     assert.deepStrictEqual(checked(), ['never', 'normal']);
     assert.strictEqual(k.getSettings().animation, 'never');
     const boxes = [...view.querySelectorAll('input[type="checkbox"]')];
-    assert.deepStrictEqual(boxes.map((b) => b.checked), [true, true, true, false]);
+    assert.deepStrictEqual(boxes.map((b) => b.checked), [true, true, true, false, true]);
     boxes[3].checked = true;
     boxes[3].dispatchEvent(new dom.window.Event('change'));
     assert.strictEqual(k.getSettings().collapse, true);
@@ -949,6 +949,107 @@ function loadInternals() {
     assert.deepStrictEqual(log.slice(before2), [], 'turning a service off makes no requests');
     assert.deepStrictEqual([...span.querySelectorAll('.emotekit-emote')].map((x) => x.dataset.emotekit), ['KEKW']);
     d.window.close();
+  });
+
+  await test('new in this channel: recent 7TV additions, newest first, and the tooltip says when', async () => {
+    const user = k.parse7tvUser(MOCK['https://7tv.io/v3/users/twitch/123']);
+    assert.ok(user.find((e) => e.code === 'Clap').addedAt > 0, '7TV timestamp kept');
+    assert.strictEqual(k.parseBttv(MOCK['https://api.betterttv.net/3/cached/emotes/global'], 'Global')[0].addedAt, undefined, 'other services have no date');
+    const ed = fakeChatInput();
+    k.ensurePickerButton();
+    k.openPicker();
+    const panel = doc.querySelector('.emotekit-picker');
+    assert.deepStrictEqual(sectionCodes(panel, 'New in this channel'), ['Clap'], 'added 2 days ago: listed; 40 days ago: not');
+    const clap = panel.querySelector('.emotekit-picker-section [data-code="Clap"] .emotekit-emote');
+    clap.dispatchEvent(new dom.window.MouseEvent('mouseover', { bubbles: true }));
+    assert.match(doc.querySelector('.emotekit-tooltip').textContent, /Added 2 days ago/);
+    k.closePicker();
+    ed.remove();
+  });
+
+  await test('tab completion strip: shows the matches while cycling, hides when done', withExtraEmotes(() => {
+    k.installCompletion();
+    const ed = fakeChatInput();
+    ed.type('hi pe');
+    ed.tab();
+    const strip = doc.querySelector('.emotekit-completions');
+    assert.ok(strip && !strip.hidden, 'shown');
+    assert.strictEqual(doc.querySelector('.emotekit-compose').style.display, 'flex');
+    const codes = () => [...strip.querySelectorAll('.emotekit-emote')].map((w) => w.dataset.emotekit);
+    assert.deepStrictEqual(codes(), ['pepeD', 'peepoSad', 'pepeLaugh', 'PepePls']);
+    assert.strictEqual(strip.querySelector('.emotekit-current').dataset.emotekit, 'pepeD');
+    assert.strictEqual(strip.querySelector('.emotekit-completions-label').textContent, 'pepeD · 1/4');
+    ed.tab();
+    assert.strictEqual(strip.querySelector('.emotekit-current').dataset.emotekit, 'peepoSad');
+    assert.strictEqual(strip.querySelector('.emotekit-completions-label').textContent, 'peepoSad · 2/4');
+    ed.tab(); ed.tab();
+    assert.deepStrictEqual(codes(), ['pepeD', 'peepoSad', 'pepeLaugh', 'PepePls'], 'all shown while they fit');
+    assert.strictEqual(strip.querySelector('.emotekit-current').dataset.emotekit, 'PepePls', 'the current one is in the row');
+    ed.el.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+    assert.ok(strip.hidden, 'hidden once you keep typing');
+    ed.remove();
+  }));
+
+  await test('tab completion strip: with many matches, the row starts just before the current one', () => {
+    const many = Array.from({ length: 12 }, (_, i) => `zq${String(i).padStart(2, '0')}`);
+    for (const code of many) k.state.map.set(code, { key: `T:${code}`, code, provider: '7TV', source: 'Global', url1x: `https://x/${code}.webp`, url2x: null, zeroWidth: false });
+    const ed = fakeChatInput();
+    ed.type('zq');
+    for (let i = 0; i < 6; i++) ed.tab(); // current: zq05
+    const strip = doc.querySelector('.emotekit-completions');
+    const codes = [...strip.querySelectorAll('.emotekit-emote')].map((w) => w.dataset.emotekit);
+    assert.deepStrictEqual(codes, ['zq03', 'zq04', 'zq05', 'zq06', 'zq07', 'zq08', 'zq09', 'zq10', 'zq11'], 'nine shown; the window stops at the end of the list');
+    assert.strictEqual(strip.querySelector('.emotekit-completions-label').textContent, 'zq05 · 6/12');
+    ed.tab(); ed.tab(); ed.tab(); ed.tab(); ed.tab(); ed.tab(); ed.tab(); // wraps to zq00
+    assert.strictEqual([...strip.querySelectorAll('.emotekit-emote')][0].dataset.emotekit, 'zq00');
+    ed.el.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    for (const code of many) k.state.map.delete(code);
+    ed.remove();
+  });
+
+  await test('message preview: shows the message with emotes while typing, only when it has emotes', async () => {
+    const ed = fakeChatInput();
+    k.watchChatInput();
+    k.loadUsage('chan-preview'); // counting on, to check previews don't count
+    ed.type('hello there');
+    await tick(80);
+    const preview = () => doc.querySelector('.emotekit-preview');
+    assert.ok(!preview() || preview().hidden, 'no emotes: no preview');
+    ed.type(' KEKW Clap');
+    await tick(80);
+    assert.ok(!preview().hidden, 'shown');
+    assert.strictEqual(preview().textContent.replace(/\s+/g, ' ').trim(), 'hello there', 'text kept, emotes as images');
+    assert.deepStrictEqual([...preview().querySelectorAll('.emotekit-emote')].map((w) => w.dataset.emotekit), ['KEKW', 'Clap']);
+    assert.strictEqual(k.usage.channel, 'chan-preview');
+    assert.strictEqual(k.usage.scores.size, 0, 'previews are not counted as chat usage');
+
+    // Hidden while the picker is open.
+    k.ensurePickerButton();
+    k.openPicker();
+    assert.strictEqual(doc.querySelector('.emotekit-compose').style.display, 'none');
+    k.closePicker();
+    ed.el.focus();
+    await tick(80);
+    assert.strictEqual(doc.querySelector('.emotekit-compose').style.display, 'flex');
+
+    // Leaving the chat box hides it; the setting turns it off.
+    ed.el.blur();
+    await tick(80);
+    assert.ok(preview().hidden, 'hidden when the chat box loses focus');
+    ed.el.focus();
+    await tick(80);
+    k.updateSettings({ preview: false });
+    assert.ok(preview().hidden, 'setting off');
+    k.updateSettings({ preview: true });
+    assert.ok(!preview().hidden);
+
+    // Sent (box cleared): gone.
+    ed.value = '';
+    ed.type('');
+    await tick(80);
+    assert.ok(preview().hidden);
+    k.loadUsage(null);
+    ed.remove();
   });
 
   await test('damaged saved settings do not stop the script', async () => {

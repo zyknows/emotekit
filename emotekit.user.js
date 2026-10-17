@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EmoteKit for Twitch
 // @namespace    https://github.com/zyknows/emotekit
-// @version      0.4.0
+// @version      0.5.0
 // @description  Shows BetterTTV, FrankerFaceZ and 7TV emotes in Twitch chat.
 // @author       Volkan
 // @license      MIT
@@ -110,6 +110,7 @@
   // Emote shape: { key, code, provider, source, url1x, url2x, static1x, static2x, zeroWidth }
   // `key` (provider + the service's emote ID) identifies one image across channels.
   // static1x/static2x are still (single-frame) versions of animated emotes, else null.
+  // addedAt (7TV only): when the emote was added to the set, in ms since 1970, else null.
   // ---------------------------------------------------------------------------
 
   function parseBttv(list, source) {
@@ -203,6 +204,7 @@
       out.push({
         key: `7TV:${e.id || e.data.id || e.name}`, code: e.name, provider: '7TV', source,
         url1x, url2x: pick('2x'), static1x: pickStill('1x'), static2x: pickStill('2x'), zeroWidth,
+        addedAt: typeof e.timestamp === 'number' && e.timestamp > 0 ? e.timestamp : null,
       });
     }
     return out;
@@ -562,6 +564,7 @@
       size: choice('size'),
       services: { bttv: services.bttv !== false, ffz: services.ffz !== false, seventv: services.seventv !== false },
       collapse: v.collapse === true,
+      preview: v.preview !== false,
     };
   }
 
@@ -582,6 +585,7 @@
     const s1 = settings.services;
     if (s0.bttv !== s1.bttv || s0.ffz !== s1.ffz || s0.seventv !== s1.seventv) reloadEmotes();
     if (before.collapse !== settings.collapse) refreshChat(true);
+    if (before.preview !== settings.preview) updatePreview();
     if (pickerIsOpen() && picker.settingsView && !picker.settingsView.hidden) syncSettingsView();
   }
 
@@ -897,6 +901,40 @@
         box-shadow: 0 0 0 2px var(--color-background-interactable-hover, rgba(83, 83, 95, 0.48));
         text-decoration: underline dotted;
       }
+      .emotekit-compose {
+        position: fixed;
+        z-index: 2147483645;
+        display: none;
+        flex-direction: column;
+        gap: 4px;
+        pointer-events: none;
+      }
+      .emotekit-compose > div {
+        pointer-events: auto;
+        padding: 5px 8px;
+        border: 1px solid var(--color-border-base, rgba(83, 83, 95, 0.48));
+        border-radius: 6px;
+        background: var(--color-background-float, #1f1f23);
+        color: var(--color-text-base, #efeff1);
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+        font-size: 13px;
+      }
+      .emotekit-compose > div[hidden] { display: none; }
+      .emotekit-completions { display: flex; align-items: center; gap: 8px; }
+      .emotekit-completions-items { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; overflow: hidden; }
+      .emotekit-completions-items > .emotekit-emote { flex-shrink: 0; }
+      .emotekit-completions .emotekit-emote { margin: 0; padding: 2px; border-radius: 4px; opacity: 0.5; }
+      .emotekit-completions .emotekit-current { opacity: 1; box-shadow: 0 0 0 2px var(--color-text-link, #a970ff); }
+      .emotekit-completions-label {
+        flex-shrink: 0;
+        max-width: 45%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 12px;
+        color: var(--color-text-alt-2, #adadb8);
+      }
+      .emotekit-preview { line-height: 1.7; overflow-wrap: anywhere; max-height: 120px; overflow-y: auto; }
       .emotekit-menu {
         position: fixed;
         z-index: 2147483646;
@@ -1156,6 +1194,7 @@
       line('emotekit-tooltip-meta', `${base.dataset.provider} · ${base.dataset.source} emote`),
       ...overlays.map((o) => line('emotekit-tooltip-meta', `+ ${o.alt} · ${o.dataset.provider} ${o.dataset.source}`)),
       ...(wrap.dataset.count ? [line('emotekit-tooltip-meta', `×${wrap.dataset.count} in this message`)] : []),
+      ...(addedLine(state.all.get(base.dataset.key)) ? [line('emotekit-tooltip-meta', addedLine(state.all.get(base.dataset.key)))] : []),
       ...(hidden.has(base.dataset.key) ? [line('emotekit-tooltip-meta', 'Hidden in chat')] : []),
       ...(isFavourite(base.dataset.key) ? [line('emotekit-tooltip-meta', '★ Favourite')] : []),
       ...(inChat ? [line('emotekit-tooltip-hint', 'Click to favourite or hide')] : []),
@@ -1163,6 +1202,14 @@
 
     el.style.display = 'block';
     positionTooltip();
+  }
+
+  // "Added today" / "Added 3 days ago" for 7TV emotes added in the last 30 days.
+  function addedLine(e) {
+    if (!e || !e.addedAt) return null;
+    const days = Math.floor((Date.now() - e.addedAt) / (24 * 3600 * 1000));
+    if (days < 0 || days > 30) return null;
+    return days === 0 ? 'Added today' : days === 1 ? 'Added yesterday' : `Added ${days} days ago`;
   }
 
   function positionTooltip() {
@@ -1401,6 +1448,7 @@
 
   function endCompletion() {
     completion.matches = null;
+    hideCompletionStrip();
   }
 
   function onChatKeyDown(ev) {
@@ -1425,7 +1473,7 @@
       // @mentions and :emote search belong to Twitch's own autocomplete.
       if (!prefix || /^[@:]/.test(prefix)) return;
       const matches = findCompletions(prefix);
-      if (!matches.length) { completion.matches = null; return; }
+      if (!matches.length) { endCompletion(); return; }
       completion.matches = matches;
       completion.index = ev.shiftKey ? matches.length - 1 : 0;
       removed = prefix;
@@ -1436,10 +1484,132 @@
     const text = `${completion.matches[completion.index]} `;
     replaceBeforeCaret(el, removed, text);
     completion.inserted = text;
+    showCompletionStrip();
   }
 
   function installCompletion() {
     window.addEventListener('keydown', onChatKeyDown, true); // before Twitch's own handlers
+  }
+
+  // ---------------------------------------------------------------------------
+  // Above the chat box: the Tab completion strip and the message preview.
+  // ---------------------------------------------------------------------------
+
+  const compose = { el: null, strip: null, preview: null, input: null, observer: null, timer: null };
+  const STRIP_SHOWN = 9; // matches shown from just before the current one
+
+  function composeEl() {
+    if (compose.el && compose.el.isConnected) return compose.el;
+    const el = document.createElement('div');
+    el.className = 'emotekit-compose';
+    const strip = document.createElement('div');
+    strip.className = 'emotekit-completions';
+    strip.hidden = true;
+    const preview = document.createElement('div');
+    preview.className = 'emotekit-preview';
+    preview.setAttribute('aria-label', 'Message preview');
+    preview.hidden = true;
+    el.append(strip, preview);
+    document.body.appendChild(el);
+    Object.assign(compose, { el, strip, preview });
+    return el;
+  }
+
+  function updateComposeVisibility() {
+    if (!compose.el) return;
+    const show = (!compose.strip.hidden || !compose.preview.hidden) && !pickerIsOpen();
+    compose.el.style.display = show ? 'flex' : 'none';
+    if (!show) return;
+    const input = document.querySelector(CHAT_INPUT_SELECTOR);
+    if (!input) return;
+    const r = (input.closest('.chat-input__textarea') || input).getBoundingClientRect();
+    compose.el.style.left = `${Math.round(r.left)}px`;
+    compose.el.style.width = `${Math.round(r.width)}px`;
+    compose.el.style.bottom = `${Math.round(window.innerHeight - r.top + 6)}px`;
+  }
+
+  // While cycling with Tab: the matches from just before the current one (so the current
+  // one is always in view, even when wide emotes fill the row), and its name and position.
+  function showCompletionStrip() {
+    composeEl();
+    const { matches, index } = completion;
+    const n = matches.length;
+    const start = Math.max(0, Math.min(index - 1, n - STRIP_SHOWN));
+    const items = [];
+    for (let i = start; i < Math.min(n, start + STRIP_SHOWN); i++) {
+      const e = state.map.get(matches[i]);
+      if (!e) continue;
+      const w = makeEmote(e);
+      if (i === index) w.classList.add('emotekit-current');
+      items.push(w);
+    }
+    const row = document.createElement('div');
+    row.className = 'emotekit-completions-items';
+    row.append(...items);
+    const label = document.createElement('span');
+    label.className = 'emotekit-completions-label';
+    label.textContent = `${matches[index]} · ${index + 1}/${n}`;
+    compose.strip.replaceChildren(row, label);
+    compose.strip.hidden = false;
+    updateComposeVisibility();
+  }
+
+  function hideCompletionStrip() {
+    if (!compose.strip || compose.strip.hidden) return;
+    compose.strip.hidden = true;
+    compose.strip.replaceChildren();
+    updateComposeVisibility();
+  }
+
+  // Watches only the chat box (not the page) for typing, to update the preview.
+  function watchChatInput() {
+    const input = document.querySelector(CHAT_INPUT_SELECTOR);
+    if (input === compose.input) return;
+    if (compose.observer) compose.observer.disconnect();
+    compose.input = input;
+    if (!input) return;
+    compose.observer = new MutationObserver(schedulePreview);
+    compose.observer.observe(input, { childList: true, subtree: true, characterData: true });
+    input.addEventListener('focus', schedulePreview);
+    input.addEventListener('blur', () => { endCompletion(); schedulePreview(); });
+  }
+
+  function schedulePreview() {
+    if (compose.timer) return;
+    compose.timer = setTimeout(() => { compose.timer = null; updatePreview(); }, 50);
+  }
+
+  // The message as typed: text, plus the names of Twitch emotes shown as images.
+  function inputText(el) {
+    let text = '';
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (n.nodeType === 3) text += n.nodeValue;
+      else if (n.tagName === 'IMG' && n.alt) text += n.alt;
+    }
+    return text.replace(/\uFEFF/g, '').replace(/\s+/g, ' ').trim();
+  }
+
+  function updatePreview() {
+    const input = compose.input;
+    const active = settings.preview && input && input.isConnected && document.activeElement === input;
+    const text = active ? inputText(input) : '';
+    const hasEmote = text && text.split(' ').some((w) => state.map.has(w) || state.hiddenWords.has(w));
+    if (!hasEmote) {
+      if (compose.preview && !compose.preview.hidden) {
+        compose.preview.hidden = true;
+        compose.preview.replaceChildren();
+        updateComposeVisibility();
+      }
+      return;
+    }
+    composeEl();
+    const span = document.createElement('span');
+    span.textContent = text;
+    compose.preview.replaceChildren(span);
+    replaceTextNode(span.firstChild, null);
+    compose.preview.hidden = false;
+    updateComposeVisibility();
   }
 
   // ---------------------------------------------------------------------------
@@ -1460,6 +1630,9 @@
     ['Global', '7TV'], ['Global', 'BTTV'], ['Global', 'FFZ'],
   ];
   const POPULAR_SHOWN = 100;
+  const NEW_DAYS = 14; // "New in this channel": 7TV emotes added this recently
+  const NEW_SHOWN = 30;
+  const DAY = 24 * 3600 * 1000;
   const RESULTS_SHOWN = 300;
 
   // Four-square grid: distinct from Twitch's smiley. Drawn in Twitch's 24px icon box.
@@ -1669,6 +1842,11 @@
       const popular = emotes.filter((e) => score(e) >= 0.5).sort((a, b) => score(b) - score(a) || byName(a, b)).slice(0, POPULAR_SHOWN);
       if (popular.length) parts.push(pickerSection('Popular here', popular));
       else if (!picker.hideMode) parts.push(pickerNote('Popular emotes show up here once some chat has come in.', 'emotekit-picker-hint'));
+      if (!picker.hideMode) {
+        const since = Date.now() - NEW_DAYS * DAY;
+        const fresh = emotes.filter((e) => e.addedAt && e.addedAt >= since).sort((a, b) => b.addedAt - a.addedAt).slice(0, NEW_SHOWN);
+        if (fresh.length) parts.push(pickerSection('New in this channel', fresh));
+      }
       parts.push(...groupSections(emotes));
       if (!picker.hideMode) {
         const n = state.hiddenWords.size;
@@ -1816,6 +1994,7 @@
     const checks = [
       service('bttv', 'BetterTTV'), service('ffz', 'FrankerFaceZ'), service('seventv', '7TV'),
       checkbox('Collapse repeated emotes', () => settings.collapse, (on) => updateSettings({ collapse: on })),
+      checkbox('Preview my message with emotes', () => settings.preview, (on) => updateSettings({ preview: on })),
     ];
     view.append(
       section('Animated emotes',
@@ -1824,6 +2003,7 @@
       section('Emote size in chat', choices('size', [['small', 'Small'], ['normal', 'Normal'], ['large', 'Large']])),
       section('Services', ...checks.slice(0, 3), note('A service that is off is not contacted at all.')),
       section('Busy chat', checks[3], note('KEKW KEKW KEKW shows as one KEKW ×3.')),
+      section('Chat box', checks[4], note('While you type a message with emotes, it shows above the chat box as it will look.')),
     );
     view.syncChecks = () => checks.forEach((c) => c.sync());
     picker.panel.appendChild(view);
@@ -1848,6 +2028,7 @@
     setHideMode(false); // renders with current stats
     picker.button.setAttribute('aria-expanded', 'true');
     picker.search.focus();
+    updateComposeVisibility();
   }
 
   function closePicker() {
@@ -1855,6 +2036,7 @@
     picker.panel.style.display = 'none';
     if (picker.button) picker.button.setAttribute('aria-expanded', 'false');
     hideTooltip();
+    updateComposeVisibility();
   }
 
   function installPicker() {
@@ -1883,6 +2065,7 @@
     setFavourite, isFavourite, getFavourites: () => favourites,
     installEmoteMenu, emoteMenu, closeEmoteMenu, installStorageSync,
     updateSettings, applySettings, getSettings: () => settings, animationMode, onHoverPlay, showSettings,
+    watchChatInput, updatePreview, compose,
   };
 
   // Test hook: tests set this object before loading the script.
@@ -1909,7 +2092,9 @@
     });
     handleRoute();
     // Twitch is a single-page app; poll the URL to catch channel switches.
-    setInterval(() => { handleRoute(); ensurePickerButton(); }, 1000); // Twitch re-renders the chat box at times
+    watchChatInput();
+    setInterval(() => { handleRoute(); ensurePickerButton(); watchChatInput(); }, 1000); // Twitch re-renders the chat box at times
+    window.addEventListener('resize', updateComposeVisibility);
     window.addEventListener('popstate', handleRoute);
   }
 
