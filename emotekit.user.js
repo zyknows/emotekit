@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         EmoteKit for Twitch
 // @namespace    https://github.com/zyknows/emotekit
-// @version      0.5.2
-// @description  BetterTTV, FrankerFaceZ and 7TV emotes in Twitch chat, with an emote picker, favourites, hiding, Tab completion and message preview.
+// @version      0.5.3
+// @description  BetterTTV, FrankerFaceZ and 7TV emotes for Twitch chat, with an emote picker, favourites, hiding, Tab completion and message preview. No account; nothing leaves your browser.
 // @author       Volkan
 // @license      MIT
 // @homepageURL  https://github.com/zyknows/emotekit

@@ -1,15 +1,20 @@
 # EmoteKit for Twitch
 
-A userscript that brings BetterTTV, FrankerFaceZ and 7TV emotes to Twitch chat, along with the tools to find, send and control them.
+A userscript that adds BetterTTV, FrankerFaceZ and 7TV emotes to Twitch chat, with tools to find, send, favourite and hide them, and settings for how chat looks.
 
-- **All three emote services** in live chat, popout chat and VOD replays, with zero-width emotes stacked and a hover preview.
-- **An emote picker that knows each channel:** your favourites first, then the emotes this channel's chat actually uses, then what the channel added recently, then everything, with search.
-- **Favourite or hide any emote** with one click in chat or in the picker. Hidden emotes turn into their name, which you can click to bring them back.
-- **Faster typing:** Tab completion ranked by what you and the channel use, with a strip showing the matches, and a live preview of your message with emotes.
-- **Your chat, your way:** animated emotes always, on hover or never; three emote sizes; any service turned off; repeated emotes collapsed into one with a count.
-- **Private and light:** no account, no tracking, nothing about your chat leaves your browser. About 0.2 ms of CPU per chat message, and still emotes cut emote downloads on a busy channel from 9.5 MB to 0.5 MB in the first minute.
+- **No account, no tracking.** Nothing about what you watch or type leaves your browser. Favourites, hidden emotes, settings and usage counts are stored locally.
+- **No dependencies.** One file. It contacts only Twitch and the three emote services.
+- **Low data and CPU use.** About 0.2 ms of CPU per chat message. With animations off, emote images on a busy channel take about 0.5 MB in the first minute instead of 9.5 MB.
 
-One file, no dependencies. Built for Safari on Mac, where BTTV and 7TV have no extension; also works in Chrome and Firefox with a userscript manager.
+What it does:
+
+- **Emotes in chat** from all three services, in live chat, popout chat and VOD replays, with zero-width emotes stacked and a preview on hover.
+- **Emote picker:** your favourites, the emotes this channel's chat uses most, emotes the channel added recently, then every emote, with search.
+- **Favourites and hiding:** click an emote in chat or in the picker to favourite or hide it. A hidden emote shows as its name; click the name to show it again.
+- **Typing:** Tab completion ranked by your favourites and the channel's usage, with a strip of the matches, and a preview of your message with emotes.
+- **Display settings:** animated emotes always, on hover or never; three emote sizes; each service on or off; repeated emotes collapsed into one with a count.
+
+Works in Safari on Mac with the free Userscripts app, and in Chrome and Firefox with a userscript manager.
 
 ## Install (Safari on Mac)
 
