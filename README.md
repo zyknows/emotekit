@@ -1,10 +1,15 @@
 # EmoteKit for Twitch
 
-A userscript that shows BetterTTV, FrankerFaceZ and 7TV emotes in Twitch chat.
+A userscript that brings BetterTTV, FrankerFaceZ and 7TV emotes to Twitch chat, along with the tools to find, send and control them.
 
-BTTV and 7TV have no Safari extension, so in Safari these emotes show up as plain text (`OMEGALUL`, `catJAM`, `KEKW`). EmoteKit replaces them with the images. It works in live chat, popout chat and VOD chat replay.
+- **All three emote services** in live chat, popout chat and VOD replays, with zero-width emotes stacked and a hover preview.
+- **An emote picker that knows each channel:** your favourites first, then the emotes this channel's chat actually uses, then what the channel added recently, then everything, with search.
+- **Favourite or hide any emote** with one click in chat or in the picker. Hidden emotes turn into their name, which you can click to bring them back.
+- **Faster typing:** Tab completion ranked by what you and the channel use, with a strip showing the matches, and a live preview of your message with emotes.
+- **Your chat, your way:** animated emotes always, on hover or never; three emote sizes; any service turned off; repeated emotes collapsed into one with a count.
+- **Private and light:** no account, no tracking, nothing about your chat leaves your browser. About 0.2 ms of CPU per chat message, and still emotes cut emote downloads on a busy channel from 9.5 MB to 0.5 MB in the first minute.
 
-It is a single file with no dependencies. It also works in Chrome and Firefox with a userscript manager.
+One file, no dependencies. Built for Safari on Mac, where BTTV and 7TV have no extension; also works in Chrome and Firefox with a userscript manager.
 
 ## Install (Safari on Mac)
 
