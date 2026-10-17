@@ -41,47 +41,33 @@ Tampermonkey and Violentmonkey update EmoteKit on their own. In Userscripts, ope
 
 ### Emote picker
 
-Click the grid button next to the chat box. The picker lists:
-
-1. **Favourites**, in the order you added them.
-2. **Popular here:** the emotes this channel's chat uses most. EmoteKit counts them as chat comes in (once per message), and older counts fade over a few weeks.
-3. **New in this channel:** 7TV emotes the channel added in the last 14 days.
-4. Every channel and global emote, by service.
-
-Search shows names that start with what you type first, then favourites and popular ones. Click an emote, or press Enter in the search box, to add it to your message. Hover an emote to see it larger, with its name and service.
+Click the grid button next to the chat box. It shows your favourites, the emotes this channel uses most, emotes the channel added recently, then every emote. Search at the top. Click an emote, or press Enter in the search, to add it to your message.
 
 ### Favourites and hiding
 
 <img src="docs/menu.png" width="220" alt="The menu when you click an emote in chat: Favourite and Hide">
 
-- **In chat:** click an emote to favourite or hide it.
-- **In the picker:** hover an emote and click the star in its corner. Favourites have a gold star in the rest of the picker.
-- **Hidden emotes** show as their name in chat. Hover the name to highlight it; click it to show the emote again. The picker's **Hide emotes** button lists your hidden emotes and hides or shows any emote you click.
+- Click an emote in chat to favourite or hide it.
+- In the picker, hover an emote and click the star to favourite it.
+- A hidden emote shows as its name in chat. Click the name to show it again.
+- **Hide emotes** in the picker lists your hidden emotes.
 
 ### Typing
 
 <img src="docs/typing.png" width="336" alt="The Tab completion strip and the message preview above the chat box">
 
-- **Tab completion:** type the start of an emote name and press Tab. Tab again goes to the next match, Shift+Tab to the previous one. Matching ignores case, and favourites and the channel's most used emotes come first. A strip above the chat box shows the matches and your position, for example `LOL · 2/12`.
-- **Message preview:** while you type a message with emotes, a line above the chat box shows how it will look.
+- **Tab completion:** type the start of an emote name and press Tab. Tab again goes to the next match, Shift+Tab to the previous one.
+- **Message preview:** while you type, your message shows above the chat box with emotes.
 
 ### Settings
 
 Click the gear in the picker.
 
-- **Animated emotes:** Auto, Always, On hover or Never. Auto plays animations unless Reduce motion is on in macOS's accessibility settings; then they play when you hover them. Still emotes download much less.
-- **Emote size in chat:** Small, Normal or Large.
-- **Services:** turn BetterTTV, FrankerFaceZ or 7TV off. A service that is off is not contacted.
-- **Collapse repeated emotes** (off by default): `KEKW KEKW KEKW` shows as one KEKW ×3.
-- **Preview my message with emotes** (on by default).
-
-### Details
-
-- Matching is exact and case-sensitive. If two emotes share a name, a channel emote is used over a global one, and 7TV over BTTV over FFZ.
-- Zero-width emotes (for example 7TV `RainTime`) are drawn on top of the emote before them.
-- Copied chat text keeps the emote names.
-- Emotes reload when you switch channels.
-- Other viewers see your emotes as images if they use EmoteKit or a BetterTTV, FrankerFaceZ or 7TV extension.
+- **Animated emotes:** Auto, Always, On hover or Never.
+- **Emote size:** Small, Normal or Large.
+- **Services:** turn BetterTTV, FrankerFaceZ or 7TV on or off.
+- **Collapse repeated emotes:** `KEKW KEKW KEKW` shows as one KEKW ×3.
+- **Message preview:** on or off.
 
 ## Privacy
 
