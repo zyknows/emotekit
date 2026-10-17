@@ -18,14 +18,14 @@ const MOCK = {
     { id: 'b5', code: 'w!', imageType: 'png', animated: false, userId: 'u', modifier: true },
   ],
   'https://api.betterttv.net/3/cached/users/twitch/123': {
-    id: 'x', channelEmotes: [{ id: 'b3', code: 'catJAM', imageType: 'gif' }],
+    id: 'x', channelEmotes: [{ id: 'b3', code: 'catJAM', imageType: 'gif', animated: true }],
     sharedEmotes: [{ id: 'b4', code: 'pepeD', imageType: 'gif' }],
   },
   'https://api.frankerfacez.com/v1/set/global': {
     default_sets: [3, 1539687],
     users: { 1532818: ['someone'] },
     sets: {
-      3: { emoticons: [{ id: 1, name: 'LilZ', urls: { 1: '//cdn.frankerfacez.com/emote/1/1', 2: '//cdn.frankerfacez.com/emote/1/2' } }] },
+      3: { emoticons: [{ id: 1, name: 'LilZ', urls: { 1: '//cdn.frankerfacez.com/emote/1/1', 2: '//cdn.frankerfacez.com/emote/1/2' }, animated: { 1: 'https://cdn.frankerfacez.com/emote/1/animated/1.webp', 2: 'https://cdn.frankerfacez.com/emote/1/animated/2.webp' } }] },
       4: { emoticons: [{ id: 9, name: 'NotDefault', urls: { 1: 'https://x/1' } }] },
       1539687: { emoticons: [
         { id: 7, name: 'ffzX', modifier: true, modifier_flags: 3, urls: { 1: 'https://cdn.frankerfacez.com/emote/7/1' } },
@@ -42,7 +42,7 @@ const MOCK = {
   },
   'https://7tv.io/v3/users/twitch/123': {
     emote_set: { emotes: [
-      { id: 's2', name: 'Clap', flags: 0, data: { flags: 0, host: { url: '//cdn.7tv.app/emote/s2', files: [{ name: '1x.webp' }, { name: '2x.webp' }] } } },
+      { id: 's2', name: 'Clap', flags: 0, data: { flags: 0, animated: true, host: { url: '//cdn.7tv.app/emote/s2', files: [{ name: '1x.webp', static_name: '1x_static.webp' }, { name: '2x.webp', static_name: '2x_static.webp' }] } } },
       { id: 's3', name: 'pepeD', flags: 0, data: { flags: 0, host: { url: '//cdn.7tv.app/emote/s3', files: [{ name: '1x.webp' }] } } },
     ] },
   },
@@ -83,7 +83,13 @@ function loadInternals() {
     assert.deepStrictEqual(A(ffz.map((e) => e.code)), ['LilZ', 'HatZ'], 'only default sets, no hidden effect modifiers');
     assert.strictEqual(ffz.find((e) => e.code === 'HatZ').zeroWidth, true, 'visible FFZ modifier is an overlay');
     assert.ok(!bttv.some((e) => e.code === 'w!'), 'BTTV text modifiers are skipped');
-    assert.strictEqual(ffz[0].url1x, 'https://cdn.frankerfacez.com/emote/1/1');
+    assert.strictEqual(ffz[0].url1x, 'https://cdn.frankerfacez.com/emote/1/animated/1.webp', 'animated version shown by default');
+    assert.strictEqual(ffz[0].static1x, 'https://cdn.frankerfacez.com/emote/1/1', 'FFZ still version is the plain urls');
+    assert.strictEqual(ffz[0].static2x, 'https://cdn.frankerfacez.com/emote/1/2');
+    const catJAM = k.parseBttvChannel(MOCK['https://api.betterttv.net/3/cached/users/twitch/123'])[0];
+    assert.strictEqual(catJAM.static1x, 'https://cdn.betterttv.net/emote/b3/static/1x.webp', 'BTTV still version');
+    assert.strictEqual(catJAM.static2x, 'https://cdn.betterttv.net/emote/b3/static/2x.webp');
+    assert.strictEqual(bttv[0].static1x, null, 'non-animated emotes have no still version');
     assert.strictEqual(k.parseFfzRoom(MOCK['https://api.frankerfacez.com/v1/room/id/123']).length, 2);
 
     const stv = k.parse7tvGlobal(MOCK['https://7tv.io/v3/emote-sets/global']);
@@ -91,6 +97,10 @@ function loadInternals() {
     assert.strictEqual(stv[0].url2x, 'https://cdn.7tv.app/emote/s1/2x.webp');
     assert.strictEqual(stv[0].zeroWidth, true);
     const user = k.parse7tvUser(MOCK['https://7tv.io/v3/users/twitch/123']);
+    const clap = user.find((e) => e.code === 'Clap');
+    assert.strictEqual(clap.static1x, 'https://cdn.7tv.app/emote/s2/1x_static.webp', '7TV still version from static_name');
+    assert.strictEqual(clap.static2x, 'https://cdn.7tv.app/emote/s2/2x_static.webp');
+    assert.strictEqual(stv[0].static1x, null, 'not animated: no still version');
     assert.strictEqual(user.find((e) => e.code === 'pepeD').url2x, null, 'missing 2x file -> null');
   });
 
@@ -807,12 +817,147 @@ function loadInternals() {
     d.window.close();
   });
 
+  await test('settings: animation modes swap between still and animated images', async () => {
+    const el = msg('Clap OMEGALUL');
+    k.processFragment(el);
+    const img = () => el.querySelector('[data-emotekit="Clap"] img');
+    assert.strictEqual(k.animationMode(), 'always', 'Auto plays animations when Reduce motion is off');
+    assert.strictEqual(img().getAttribute('src'), 'https://cdn.7tv.app/emote/s2/1x.webp');
+
+    k.updateSettings({ animation: 'never' });
+    assert.strictEqual(img().getAttribute('src'), 'https://cdn.7tv.app/emote/s2/1x_static.webp', 'never: still version');
+    assert.strictEqual(img().getAttribute('srcset'), 'https://cdn.7tv.app/emote/s2/1x_static.webp 1x, https://cdn.7tv.app/emote/s2/2x_static.webp 2x');
+    assert.strictEqual(el.querySelector('[data-emotekit="OMEGALUL"] img').getAttribute('src'), 'https://cdn.betterttv.net/emote/b1/1x', 'non-animated emotes untouched');
+    const fresh = msg('Clap');
+    k.processFragment(fresh);
+    assert.ok(fresh.querySelector('img').getAttribute('src').endsWith('1x_static.webp'), 'new messages start still');
+
+    k.updateSettings({ animation: 'hover' });
+    assert.ok(img().getAttribute('src').endsWith('1x_static.webp'), 'hover: still until hovered');
+    k.onHoverPlay({ target: img() });
+    assert.strictEqual(img().getAttribute('src'), 'https://cdn.7tv.app/emote/s2/1x.webp', 'plays while hovered');
+    k.onHoverPlay({ target: el });
+    assert.ok(img().getAttribute('src').endsWith('1x_static.webp'), 'still again when the pointer leaves');
+
+    k.updateSettings({ animation: 'auto' });
+    assert.strictEqual(img().getAttribute('src'), 'https://cdn.7tv.app/emote/s2/1x.webp');
+    assert.strictEqual(JSON.parse(dom.window.localStorage.getItem('emotekit:settings')).animation, 'auto', 'saved');
+  });
+
+  await test('settings: emote size sets the chat emote height', () => {
+    k.updateSettings({ size: 'large' });
+    assert.strictEqual(doc.documentElement.style.getPropertyValue('--emotekit-size'), '36px');
+    k.updateSettings({ size: 'small' });
+    assert.strictEqual(doc.documentElement.style.getPropertyValue('--emotekit-size'), '22px');
+    k.updateSettings({ size: 'normal' });
+    assert.strictEqual(doc.documentElement.style.getPropertyValue('--emotekit-size'), '28px');
+  });
+
+  await test('settings: collapse repeated emotes, and switching it re-renders chat', () => {
+    k.updateSettings({ collapse: true });
+    const el = msg('KEKW KEKW  KEKW KEKW nice Clap Clap catJAM catJAM catJAM RainTime');
+    k.processFragment(el);
+    const wraps = [...el.querySelectorAll('.emotekit-emote')];
+    assert.deepStrictEqual(wraps.map((w) => [w.dataset.emotekit, w.dataset.count || '1']),
+      [['KEKW', '4'], ['Clap', '1'], ['Clap', '1'], ['catJAM', '1'], ['catJAM', '1'], ['catJAM', '1']], 'runs of 3+ collapse; 2 stay; an emote with an overlay is not merged');
+    assert.strictEqual(wraps[0].querySelector('.emotekit-count').textContent, '×4');
+    assert.strictEqual(wraps[5].querySelectorAll('img').length, 2, 'overlay kept on the last one');
+    assert.strictEqual(el.textContent.replace(/\s+/g, ' ').trim(), '×4 nice', 'the gaps of the run are gone');
+
+    k.updateSettings({ collapse: false });
+    assert.strictEqual(el.querySelectorAll('[data-emotekit="KEKW"]').length, 4, 'turning it off brings the repeats back');
+    assert.strictEqual(el.querySelector('.emotekit-count'), null);
+    k.updateSettings({ collapse: true });
+    assert.strictEqual(el.querySelectorAll('[data-emotekit="KEKW"]').length, 1, 'and on again collapses existing chat');
+    k.updateSettings({ collapse: false });
+  });
+
+  await test('settings view: gear, choices and checkboxes', async () => {
+    const ed = fakeChatInput();
+    k.ensurePickerButton();
+    k.openPicker();
+    const panel = doc.querySelector('.emotekit-picker');
+    const gear = panel.querySelector('.emotekit-picker-settings-toggle');
+    gear.click();
+    const view = panel.querySelector('.emotekit-settings');
+    assert.ok(view && !view.hidden, 'settings shown');
+    assert.ok(panel.querySelector('.emotekit-picker-list').hidden, 'emote list hidden meanwhile');
+    assert.strictEqual(gear.getAttribute('aria-pressed'), 'true');
+    assert.deepStrictEqual([...view.querySelectorAll('h3')].map((h) => h.textContent), ['Animated emotes', 'Emote size in chat', 'Services', 'Busy chat']);
+    const checked = () => [...view.querySelectorAll('[aria-checked="true"]')].map((b) => b.dataset.value);
+    assert.deepStrictEqual(checked(), ['auto', 'normal']);
+    view.querySelector('[data-value="never"]').click();
+    assert.deepStrictEqual(checked(), ['never', 'normal']);
+    assert.strictEqual(k.getSettings().animation, 'never');
+    const boxes = [...view.querySelectorAll('input[type="checkbox"]')];
+    assert.deepStrictEqual(boxes.map((b) => b.checked), [true, true, true, false]);
+    boxes[3].checked = true;
+    boxes[3].dispatchEvent(new dom.window.Event('change'));
+    assert.strictEqual(k.getSettings().collapse, true);
+
+    // Another tab changes a setting: this tab and its open settings view follow.
+    k.installStorageSync();
+    dom.window.localStorage.setItem('emotekit:settings', JSON.stringify({ ...k.getSettings(), size: 'large', collapse: false }));
+    dom.window.dispatchEvent(new dom.window.StorageEvent('storage', { key: 'emotekit:settings' }));
+    assert.deepStrictEqual(checked(), ['never', 'large']);
+    assert.strictEqual(boxes[3].checked, false);
+
+    // Typing a search goes back to the emotes.
+    const search = panel.querySelector('.emotekit-picker-search');
+    search.value = 'cl';
+    search.dispatchEvent(new dom.window.Event('input'));
+    assert.ok(view.hidden && !panel.querySelector('.emotekit-picker-list').hidden);
+    gear.click();
+    panel.querySelector('.emotekit-picker-hide-toggle').click();
+    assert.ok(view.hidden, 'Hide emotes also leaves settings');
+    k.closePicker();
+    k.updateSettings({ animation: 'auto', size: 'normal', collapse: false });
+    ed.remove();
+  });
+
+  await test('settings: a service turned off is not contacted and its emotes stay text', async () => {
+    const d = new JSDOM('<!doctype html><body></body>', { url: 'https://www.twitch.tv/somechannel', runScripts: 'outside-only' });
+    d.window.localStorage.setItem('emotekit:settings', JSON.stringify({ services: { bttv: false } }));
+    const log = [];
+    d.window.fetch = mockFetch(log);
+    d.window.console.info = () => {};
+    d.window.eval(SRC);
+    await tick(50);
+    assert.ok(!log.some((u) => u.includes('betterttv')), 'no BTTV requests');
+    assert.ok(log.some((u) => u.includes('7tv.io')) && log.some((u) => u.includes('frankerfacez')));
+    const span = d.window.document.createElement('span');
+    span.className = 'text-fragment';
+    span.textContent = 'catJAM KEKW';
+    d.window.document.body.appendChild(span);
+    await tick(10);
+    assert.deepStrictEqual([...span.querySelectorAll('.emotekit-emote')].map((x) => x.dataset.emotekit), ['KEKW']);
+
+    // Turned back on (here from another tab): only BTTV is fetched, and its emotes appear.
+    const before = log.length;
+    d.window.localStorage.setItem('emotekit:settings', JSON.stringify({ services: { bttv: true, ffz: true, seventv: true } }));
+    d.window.dispatchEvent(new d.window.StorageEvent('storage', { key: 'emotekit:settings' }));
+    await tick(50);
+    assert.deepStrictEqual(log.slice(before).filter((u) => u !== 'https://gql.twitch.tv/gql'),
+      ['https://api.betterttv.net/3/cached/emotes/global', 'https://api.betterttv.net/3/cached/users/twitch/123'], 'other services come from cache');
+    assert.deepStrictEqual([...span.querySelectorAll('.emotekit-emote')].map((x) => x.dataset.emotekit), ['catJAM', 'KEKW']);
+
+    // Off again: no requests at all, and catJAM goes back to text.
+    const before2 = log.length;
+    d.window.localStorage.setItem('emotekit:settings', JSON.stringify({ services: { bttv: false, ffz: true, seventv: true } }));
+    d.window.dispatchEvent(new d.window.StorageEvent('storage', { key: 'emotekit:settings' }));
+    await tick(50);
+    assert.deepStrictEqual(log.slice(before2), [], 'turning a service off makes no requests');
+    assert.deepStrictEqual([...span.querySelectorAll('.emotekit-emote')].map((x) => x.dataset.emotekit), ['KEKW']);
+    d.window.close();
+  });
+
   await test('damaged saved settings do not stop the script', async () => {
     const d = new JSDOM('<!doctype html><body></body>', { url: 'https://www.twitch.tv/somechannel', runScripts: 'outside-only' });
     d.window.localStorage.setItem('emotekit:hidden', '5');
     d.window.localStorage.setItem('emotekit:favourites', '{"oops":true}');
     d.window.localStorage.setItem('emotekit:usage-index', 'not json');
     d.window.localStorage.setItem('emotekit:usage:123', '{"t":"x","s":null}');
+    d.window.localStorage.setItem('emotekit:settings', '{"animation":"sideways","size":7,"services":"no"}');
     d.window.fetch = mockFetch([]);
     const infos = [];
     d.window.console.info = (...a) => infos.push(a.join(' '));
