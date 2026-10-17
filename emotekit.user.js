@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EmoteKit for Twitch
 // @namespace    https://github.com/zyknows/emotekit
-// @version      0.5.0
+// @version      0.5.1
 // @description  Shows BetterTTV, FrankerFaceZ and 7TV emotes in Twitch chat.
 // @author       Volkan
 // @license      MIT
@@ -352,9 +352,16 @@
     return loadSources(state.globalCache, GLOBAL_SOURCES);
   }
 
+  // Twitch switches channels without reloading the page, so only the most recent
+  // channels' lists stay in memory.
+  const CHANNELS_CACHED = 10;
+
   function loadChannel(twitchId) {
-    if (!state.channelCache.has(twitchId)) state.channelCache.set(twitchId, new Map());
-    return loadSources(state.channelCache.get(twitchId), channelSources(twitchId));
+    const cache = state.channelCache.get(twitchId) || new Map();
+    state.channelCache.delete(twitchId); // re-insert as the most recent
+    state.channelCache.set(twitchId, cache);
+    while (state.channelCache.size > CHANNELS_CACHED) state.channelCache.delete(state.channelCache.keys().next().value);
+    return loadSources(cache, channelSources(twitchId));
   }
 
   async function handleRoute() {
@@ -1495,7 +1502,7 @@
   // Above the chat box: the Tab completion strip and the message preview.
   // ---------------------------------------------------------------------------
 
-  const compose = { el: null, strip: null, preview: null, input: null, observer: null, timer: null };
+  const compose = { el: null, strip: null, preview: null, input: null, observer: null, timer: null, shown: '' };
   const STRIP_SHOWN = 9; // matches shown from just before the current one
 
   function composeEl() {
@@ -1596,6 +1603,7 @@
     const text = active ? inputText(input) : '';
     const hasEmote = text && text.split(' ').some((w) => state.map.has(w) || state.hiddenWords.has(w));
     if (!hasEmote) {
+      compose.shown = '';
       if (compose.preview && !compose.preview.hidden) {
         compose.preview.hidden = true;
         compose.preview.replaceChildren();
@@ -1603,6 +1611,10 @@
       }
       return;
     }
+    // Same text as already shown (caret moved, focus came back): nothing to redraw.
+    const key = `${state.mapVersion}|${settings.collapse}|${text}`;
+    if (key === compose.shown && compose.preview && !compose.preview.hidden) return;
+    compose.shown = key;
     composeEl();
     const span = document.createElement('span');
     span.textContent = text;
@@ -1823,7 +1835,8 @@
     const parts = [];
 
     if (!state.full.size) {
-      parts.push(pickerNote('Emotes are still loading.'));
+      const anyService = Object.values(settings.services).some(Boolean);
+      parts.push(pickerNote(anyService ? 'Emotes are still loading.' : 'All emote services are turned off in the settings (gear button).'));
     } else if (query) {
       const results = emotes.filter((e) => e.code.toLowerCase().includes(query));
       const starts = (e) => (e.code.toLowerCase().startsWith(query) ? 0 : 1);
@@ -1871,6 +1884,9 @@
     if (picker.groups.key === key) {
       if (picker.groups.favourites !== favourites) syncFavouriteItems(picker.groups.nodes);
       picker.groups.favourites = favourites;
+      // The animation setting changed while these were off screen (e.g. during a search).
+      if (picker.groups.mode !== animationMode()) picker.groups.nodes.forEach(refreshImages);
+      picker.groups.mode = animationMode();
       return picker.groups.nodes;
     }
     const groups = new Map(PICKER_GROUPS.map(([source, provider]) => [`${source} · ${provider}`, []]));
@@ -1880,7 +1896,7 @@
     }
     const nodes = [];
     for (const [title, list] of groups) if (list.length) nodes.push(pickerSection(title, list.sort(byName)));
-    picker.groups = { key, nodes, favourites };
+    picker.groups = { key, nodes, favourites, mode: animationMode() };
     return nodes;
   }
 
@@ -2065,7 +2081,7 @@
     setFavourite, isFavourite, getFavourites: () => favourites,
     installEmoteMenu, emoteMenu, closeEmoteMenu, installStorageSync,
     updateSettings, applySettings, getSettings: () => settings, animationMode, onHoverPlay, showSettings,
-    watchChatInput, updatePreview, compose,
+    watchChatInput, updatePreview, compose, loadChannel,
   };
 
   // Test hook: tests set this object before loading the script.

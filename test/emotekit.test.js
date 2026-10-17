@@ -844,6 +844,45 @@ function loadInternals() {
     assert.strictEqual(JSON.parse(dom.window.localStorage.getItem('emotekit:settings')).animation, 'auto', 'saved');
   });
 
+  await test('picker: sections kept from before follow an animation change made meanwhile', () => {
+    const ed = fakeChatInput();
+    k.ensurePickerButton();
+    k.openPicker();
+    const panel = doc.querySelector('.emotekit-picker');
+    const search = panel.querySelector('.emotekit-picker-search');
+    search.value = 'zzz';
+    search.dispatchEvent(new dom.window.Event('input')); // service sections now off screen
+    k.updateSettings({ animation: 'never' });
+    search.value = '';
+    search.dispatchEvent(new dom.window.Event('input'));
+    const img = [...panel.querySelectorAll('.emotekit-picker-section')]
+      .find((x) => x.querySelector('h3').textContent.startsWith('Channel · 7TV')).querySelector('[data-code="Clap"] img');
+    assert.ok(!img.getAttribute('src') || img.getAttribute('src').endsWith('_static.webp'), 'still version after coming back');
+    k.updateSettings({ animation: 'auto' });
+    k.closePicker();
+    ed.remove();
+  });
+
+  await test('picker: says so when every service is turned off', async () => {
+    const lists = k.state.lists;
+    const warn = dom.window.console.warn;
+    dom.window.console.warn = () => {};
+    k.updateSettings({ services: { bttv: false, ffz: false, seventv: false } });
+    await tick(30); // the reload this triggers runs in the background
+    const ed = fakeChatInput();
+    k.ensurePickerButton();
+    k.openPicker();
+    assert.match(doc.querySelector('.emotekit-picker-empty').textContent, /turned off in the settings/);
+    k.closePicker();
+    ed.remove();
+    k.updateSettings({ services: { bttv: true, ffz: true, seventv: true } });
+    await tick(30);
+    dom.window.console.warn = warn;
+    k.state.lists = lists; // this test page has no network; put the mock emotes back
+    k.applyEmoteLists();
+    k.refreshChat();
+  });
+
   await test('settings: emote size sets the chat emote height', () => {
     k.updateSettings({ size: 'large' });
     assert.strictEqual(doc.documentElement.style.getPropertyValue('--emotekit-size'), '36px');
@@ -1023,6 +1062,12 @@ function loadInternals() {
     assert.strictEqual(k.usage.channel, 'chan-preview');
     assert.strictEqual(k.usage.scores.size, 0, 'previews are not counted as chat usage');
 
+    // Unchanged text (focus back, caret moved) doesn't redraw.
+    const firstImg = preview().querySelector('img');
+    ed.el.blur(); ed.el.focus();
+    await tick(80);
+    assert.strictEqual(preview().querySelector('img'), firstImg, 'not redrawn when the text is the same');
+
     // Hidden while the picker is open.
     k.ensurePickerButton();
     k.openPicker();
@@ -1050,6 +1095,24 @@ function loadInternals() {
     assert.ok(preview().hidden);
     k.loadUsage(null);
     ed.remove();
+  });
+
+  await test('only the 10 most recent channels keep their emote lists in memory', async () => {
+    const d = new JSDOM('<!doctype html><body></body>', { url: 'https://www.twitch.tv/', runScripts: 'outside-only' });
+    d.window.__EMOTEKIT_TEST__ = {};
+    d.window.fetch = async () => ({ status: 404, text: async () => '' });
+    d.window.eval(SRC);
+    const kk = d.window.__EMOTEKIT_TEST__;
+    d.window.console.warn = () => {};
+    for (let i = 0; i < 12; i++) await kk.loadChannel(`id${i}`);
+    await kk.loadChannel('id3'); // used again: becomes the most recent
+    await kk.loadChannel('id12');
+    const ids = [...kk.state.channelCache.keys()];
+    assert.strictEqual(ids.length, 10);
+    assert.ok(ids.includes('id3') && ids.includes('id12'));
+    assert.ok(!ids.includes('id0') && !ids.includes('id1') && !ids.includes('id2'), 'oldest dropped');
+    assert.ok(ids.includes('id4'), 'recent ones kept');
+    d.window.close();
   });
 
   await test('damaged saved settings do not stop the script', async () => {
