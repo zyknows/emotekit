@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EmoteKit for Twitch
 // @namespace    https://github.com/zyknows/emotekit
-// @version      0.5.4
+// @version      0.6.0
 // @description  BetterTTV, FrankerFaceZ and 7TV emotes for Twitch chat, with each channel's most used emotes at a glance, an emote picker, favourites, hiding, Tab completion and message preview. No account; nothing leaves your browser.
 // @author       Volkan
 // @license      MIT
@@ -1648,17 +1648,22 @@
   const RESULTS_SHOWN = 300;
 
   // Four-square grid: distinct from Twitch's smiley. Drawn in Twitch's 24px icon box.
-  const PICKER_ICON = '<svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+  const PICKER_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
     + '<rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/>'
     + '<rect x="3" y="13" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/></svg>';
 
   // Gear.
-  const SETTINGS_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+  const SETTINGS_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
     + '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>';
 
   // Crossed-out eye.
-  const HIDE_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">'
+  const HIDE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">'
     + '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path d="M4 20 20 4"/></svg>';
+
+  // The icons are fixed SVG markup, parsed into nodes (no innerHTML).
+  function iconNode(markup) {
+    return document.importNode(new DOMParser().parseFromString(markup, 'image/svg+xml').documentElement, true);
+  }
 
   // The button is a copy of Twitch's own emote button with the icon swapped, so it lines up
   // and behaves like the buttons next to it in every browser.
@@ -1676,8 +1681,8 @@
     button.setAttribute('aria-label', 'EmoteKit emotes');
     button.setAttribute('aria-expanded', 'false');
     const svg = button.querySelector('svg');
-    if (svg) svg.outerHTML = PICKER_ICON;
-    else button.innerHTML = PICKER_ICON;
+    if (svg) svg.replaceWith(iconNode(PICKER_ICON));
+    else button.replaceChildren(iconNode(PICKER_ICON));
     button.addEventListener('click', () => (pickerIsOpen() ? closePicker() : openPicker()));
     wrap.appendChild(button);
     slot.parentElement.insertBefore(wrap, slot);
@@ -1730,7 +1735,7 @@
     settingsToggle.className = 'emotekit-picker-settings-toggle';
     settingsToggle.setAttribute('aria-label', 'Settings');
     settingsToggle.setAttribute('aria-pressed', 'false');
-    settingsToggle.innerHTML = SETTINGS_ICON;
+    settingsToggle.replaceChildren(iconNode(SETTINGS_ICON));
     settingsToggle.addEventListener('click', () => showSettings(!(picker.settingsView && !picker.settingsView.hidden)));
     bar.append(search, hideToggle, settingsToggle);
 
@@ -1771,7 +1776,8 @@
     picker.hideMode = on;
     picker.panel.classList.toggle('emotekit-hide-mode', on);
     picker.hideToggle.setAttribute('aria-pressed', String(on));
-    picker.hideToggle.innerHTML = on ? 'Done' : `${HIDE_ICON}<span>Hide emotes</span>`;
+    if (on) picker.hideToggle.replaceChildren('Done');
+    else picker.hideToggle.replaceChildren(iconNode(HIDE_ICON), Object.assign(document.createElement('span'), { textContent: 'Hide emotes' }));
     picker.notice.hidden = !on;
     if (render) renderPicker();
   }

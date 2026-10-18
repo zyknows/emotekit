@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.0 (2026-10-18)
+
+- Firefox add-on: the same script packaged for Firefox (`extension/`, built with `npm run build:firefox`). It asks only for twitch.tv and the emote services, and declares that it collects no data.
+- The picker's icons are built from DOM nodes instead of HTML strings.
+
 ## 0.5.4 to 0.5.2 (2026-10-17)
 
 - README opening and script description rewritten to cover the full feature set, starting with each channel's most used emotes and the privacy and resource numbers.

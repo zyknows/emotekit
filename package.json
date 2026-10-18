@@ -1,11 +1,12 @@
 {
   "name": "emotekit",
-  "version": "0.5.4",
+  "version": "0.6.0",
   "description": "BetterTTV, FrankerFaceZ and 7TV emotes for Twitch chat, with each channel's most used emotes at a glance, an emote picker, favourites, hiding, Tab completion and message preview. No account; nothing leaves your browser.",
   "private": true,
   "license": "MIT",
   "scripts": {
-    "test": "node test/emotekit.test.js"
+    "test": "node test/emotekit.test.js",
+    "build:firefox": "sh scripts/build-firefox.sh"
   },
   "devDependencies": {
     "jsdom": "^24.0.0"

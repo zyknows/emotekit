@@ -118,6 +118,20 @@ function loadInternals() {
     assert.match(header, /@inject-into\s+content/);
   });
 
+  await test('Firefox add-on manifest matches the userscript', () => {
+    const root = require('path').join(__dirname, '..');
+    const manifest = JSON.parse(fs.readFileSync(require('path').join(root, 'extension', 'manifest.json'), 'utf8'));
+    const header = SRC.slice(0, SRC.indexOf('==/UserScript=='));
+    const all = (key) => [...header.matchAll(new RegExp(`@${key}\\s+(\\S+)`, 'g'))].map((m) => m[1]);
+    assert.strictEqual(manifest.version, all('version')[0], 'same version');
+    const [cs] = manifest.content_scripts;
+    assert.deepStrictEqual(cs.js, ['emotekit.user.js'], 'the add-on runs the userscript file itself');
+    assert.deepStrictEqual([...cs.matches].sort(), all('match').sort(), 'same Twitch pages');
+    assert.deepStrictEqual(manifest.host_permissions.map((h) => new URL(h.replace('/*', '/')).hostname).sort(), all('connect').sort(), 'permission for exactly the hosts the script talks to');
+    assert.deepStrictEqual(A(manifest.browser_specific_settings.gecko.data_collection_permissions.required), ['none'], 'declares no data collection');
+    for (const file of Object.values(manifest.icons)) assert.ok(fs.existsSync(require('path').join(root, 'extension', file)), file);
+  });
+
   await test('channelFromPath', () => {
     const c = k.channelFromPath;
     assert.deepStrictEqual({ ...c('/xQcOW') }, { login: 'xqcow' });

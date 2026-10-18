@@ -112,6 +112,16 @@ npm test
 
 Tests run the script in [jsdom](https://github.com/jsdom/jsdom) against mocked API responses.
 
+### Firefox add-on
+
+The add-on runs the same `emotekit.user.js`. `extension/` holds its manifest and icons.
+
+```sh
+npm run build:firefox   # writes dist/emotekit-firefox-<version>.zip
+```
+
+The version in `extension/manifest.json` must match the script's `@version`; the build and the tests check this.
+
 ## Disclaimer
 
 Not affiliated with Twitch, Apple, BetterTTV, FrankerFaceZ or 7TV. Emotes belong to their creators.
